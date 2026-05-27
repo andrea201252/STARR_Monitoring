@@ -82,6 +82,13 @@ MONITORING_MODE = "matched_pixels"
 MONITORING_SPACING_M = 500.0
 MONITORING_SEED = 42
 
+# Extra vector exports. The canonical audit format is GPKG; SHP is added for GIS interoperability.
+EXPORT_SUPPORT_CELLS_SHP = True
+EXPORT_MATCHED_POINTS_SHP = True
+EXPORT_MONITORING_POINTS_SHP = True
+EXPORT_NATIVE_MATCHED_CELLS_GPKG = True
+EXPORT_NATIVE_MATCHED_CELLS_SHP = True
+
 CRS_GEO = "EPSG:4326"
 
 
@@ -215,9 +222,43 @@ def make_points_gdf(df):
     return gdf, df_u, crs_m, lon_col, lat_col
 
 
+def _has_native_ref_bounds(gdf):
+    cols = {"ref_cell_xmin", "ref_cell_ymin", "ref_cell_xmax", "ref_cell_ymax"}
+    return cols.issubset(set(gdf.columns))
+
+
 def build_support_cells(points_gdf, mode=RA_SUPPORT_MODE):
     if mode not in {"pixel", "block"}:
         raise ValueError("RA_SUPPORT_MODE deve essere 'pixel' o 'block'.")
+
+    # Preferred audit mode: use native raster cell bounds propagated from Step 01 → Step 02 → Step 03.
+    # This avoids rebuilding a 30 m square from a reprojected lon/lat point.
+    if mode == "pixel" and _has_native_ref_bounds(points_gdf):
+        geoms = []
+        attrs = []
+        for i, row in points_gdf.reset_index(drop=True).iterrows():
+            try:
+                x0 = float(row["ref_cell_xmin"])
+                y0 = float(row["ref_cell_ymin"])
+                x1 = float(row["ref_cell_xmax"])
+                y1 = float(row["ref_cell_ymax"])
+                geoms.append(box(x0, y0, x1, y1))
+                attrs.append({
+                    "support_id": i + 1,
+                    "support_mode": "pixel_native_bounds",
+                    "support_m": PIXEL_SIZE_M,
+                    "ref_pixel_id": str(row.get("ref_pixel_id", "")),
+                    "ref_grid_row": int(row.get("ref_grid_row", -1)) if pd.notna(row.get("ref_grid_row", np.nan)) else -1,
+                    "ref_grid_col": int(row.get("ref_grid_col", -1)) if pd.notna(row.get("ref_grid_col", np.nan)) else -1,
+                })
+            except Exception:
+                p = row.geometry
+                half = PIXEL_SIZE_M / 2.0
+                geoms.append(box(p.x - half, p.y - half, p.x + half, p.y + half))
+                attrs.append({"support_id": i + 1, "support_mode": "pixel_centroid_fallback", "support_m": PIXEL_SIZE_M})
+        support = gpd.GeoDataFrame(attrs, geometry=geoms, crs=points_gdf.crs)
+        support["area_ha"] = support.geometry.area / 10000.0
+        return support
 
     geoms = []
     attrs = []
@@ -225,9 +266,8 @@ def build_support_cells(points_gdf, mode=RA_SUPPORT_MODE):
         half = PIXEL_SIZE_M / 2.0
         for i, p in enumerate(points_gdf.geometry):
             geoms.append(box(p.x - half, p.y - half, p.x + half, p.y + half))
-            attrs.append({"support_id": i + 1, "support_mode": "pixel", "support_m": PIXEL_SIZE_M})
+            attrs.append({"support_id": i + 1, "support_mode": "pixel_centroid_fallback", "support_m": PIXEL_SIZE_M})
     else:
-        # Snap to regular grid. Duplicate blocks are dissolved by support key.
         keys = {}
         size = BLOCK_SIZE_M
         for p in points_gdf.geometry:
@@ -242,7 +282,6 @@ def build_support_cells(points_gdf, mode=RA_SUPPORT_MODE):
     support = gpd.GeoDataFrame(attrs, geometry=geoms, crs=points_gdf.crs)
     support["area_ha"] = support.geometry.area / 10000.0
     return support
-
 
 def build_reference_area(points_gdf, support_gdf, meta=None):
     geom = polygonal_only(geom_union(support_gdf.geometry))
@@ -408,6 +447,34 @@ def diagnostics_plot(points_gdf, support_gdf, bounds_gdf, mon_gdf, out_dir=None)
     return fig
 
 
+
+
+def build_native_matched_cells(points_gdf):
+    """Return matched reference cells as native raster footprints when available."""
+    if not _has_native_ref_bounds(points_gdf):
+        return None
+    geoms = []
+    rows = []
+    for i, row in points_gdf.reset_index(drop=True).iterrows():
+        try:
+            geoms.append(box(float(row["ref_cell_xmin"]), float(row["ref_cell_ymin"]),
+                             float(row["ref_cell_xmax"]), float(row["ref_cell_ymax"])))
+            rows.append({
+                "cell_id": i + 1,
+                "ref_pixel_id": str(row.get("ref_pixel_id", "")),
+                "ref_row": int(row.get("ref_grid_row", -1)) if pd.notna(row.get("ref_grid_row", np.nan)) else -1,
+                "ref_col": int(row.get("ref_grid_col", -1)) if pd.notna(row.get("ref_grid_col", np.nan)) else -1,
+                "ref_lon": float(row.get("ref_lon", row.get("lon", np.nan))) if pd.notna(row.get("ref_lon", row.get("lon", np.nan))) else np.nan,
+                "ref_lat": float(row.get("ref_lat", row.get("lat", np.nan))) if pd.notna(row.get("ref_lat", row.get("lat", np.nan))) else np.nan,
+                "area_ha": float(box(float(row["ref_cell_xmin"]), float(row["ref_cell_ymin"]),
+                                      float(row["ref_cell_xmax"]), float(row["ref_cell_ymax"])).area / 10000.0),
+            })
+        except Exception:
+            continue
+    if not rows:
+        return None
+    return gpd.GeoDataFrame(rows, geometry=geoms, crs=points_gdf.crs)
+
 # ================================================================
 # EXPORT + LOCK
 # ================================================================
@@ -429,8 +496,13 @@ def export_and_lock(bounds_gdf, support_gdf, mon_gdf, points_gdf, df_u, twin_rep
         "shp": out_dir / "reference_area_FINAL.shp",
         "geojson": out_dir / "reference_area_FINAL.geojson",
         "support": out_dir / "reference_area_support_cells.gpkg",
+        "support_shp": out_dir / "reference_area_support_cells.shp",
+        "native_cells": out_dir / "matched_reference_native_cells.gpkg",
+        "native_cells_shp": out_dir / "matched_reference_native_cells.shp",
         "matched": out_dir / "matched_donor_pixels.gpkg",
+        "matched_shp": out_dir / "matched_donor_pixels.shp",
         "mon_gpkg": out_dir / "monitoring_points_FIXED.gpkg",
+        "mon_shp": out_dir / "monitoring_points_FIXED.shp",
         "mon_csv": out_dir / "monitoring_points_FIXED.csv",
         "cov": out_dir / "covariate_summary.csv",
         "diag": out_dir / "diagnostics.png",
@@ -446,9 +518,23 @@ def export_and_lock(bounds_gdf, support_gdf, mon_gdf, points_gdf, df_u, twin_rep
     shp_cols = ["project", "run_id", "bounds_method", "support_mode", "support_m", "total_ha", "n_matched_pts", "pct_pts_inside", "lock_status", "validity_years", "geometry"]
     bounds_geo[shp_cols].to_file(paths["shp"], driver="ESRI Shapefile")
     support_geo.to_file(paths["support"], driver="GPKG")
+    if EXPORT_SUPPORT_CELLS_SHP:
+        support_geo.to_file(paths["support_shp"], driver="ESRI Shapefile")
+
+    native_cells = build_native_matched_cells(points_gdf)
+    if native_cells is not None and EXPORT_NATIVE_MATCHED_CELLS_GPKG:
+        native_cells_geo = native_cells.to_crs(CRS_GEO)
+        native_cells_geo.to_file(paths["native_cells"], driver="GPKG")
+        if EXPORT_NATIVE_MATCHED_CELLS_SHP:
+            native_cells_geo.to_file(paths["native_cells_shp"], driver="ESRI Shapefile")
+
     points_geo.to_file(paths["matched"], driver="GPKG")
+    if EXPORT_MATCHED_POINTS_SHP:
+        points_geo.to_file(paths["matched_shp"], driver="ESRI Shapefile")
     if mon_gdf is not None:
         mon_gdf.to_file(paths["mon_gpkg"], driver="GPKG")
+        if EXPORT_MONITORING_POINTS_SHP:
+            mon_gdf.to_file(paths["mon_shp"], driver="ESRI Shapefile")
         mon_gdf.drop(columns=["geometry"], errors="ignore").to_csv(paths["mon_csv"], index=False)
     cov_df.to_csv(paths["cov"], index=False)
 
@@ -479,10 +565,10 @@ def export_and_lock(bounds_gdf, support_gdf, mon_gdf, points_gdf, df_u, twin_rep
         "project": proj_name,
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "methodology": "GS STARR Track 1 SEMDB",
-        "pipeline_version": "v04_pixel_support_reference_area",
+        "pipeline_version": "v07_native_pixel_support_with_vector_exports",
         "donor_pool_rule": "Non-Forest at Year 0 and >5 km from Activity Boundary",
         "reference_area_definition": {
-            "description": "Locked RA built from matched donor pixel/block support, not from a smoothed global hull.",
+            "description": "Locked RA built from matched donor native raster pixel/block support, not from a smoothed global hull.",
             "support_mode": RA_SUPPORT_MODE,
             "pixel_size_m": PIXEL_SIZE_M,
             "block_size_m": BLOCK_SIZE_M,
@@ -496,6 +582,15 @@ def export_and_lock(bounds_gdf, support_gdf, mon_gdf, points_gdf, df_u, twin_rep
             "validity_years": 10,
             "lock_status": "LOCKED",
             "crs_metric": crs_m,
+            "native_bounds_used": bool(_has_native_ref_bounds(points_gdf)),
+            "vector_exports": {
+                "support_cells_gpkg": str(paths["support"]),
+                "support_cells_shp": str(paths["support_shp"]) if EXPORT_SUPPORT_CELLS_SHP else None,
+                "native_matched_cells_gpkg": str(paths["native_cells"]) if paths["native_cells"].exists() else None,
+                "native_matched_cells_shp": str(paths["native_cells_shp"]) if paths["native_cells_shp"].exists() else None,
+                "matched_points_gpkg": str(paths["matched"]),
+                "matched_points_shp": str(paths["matched_shp"]) if EXPORT_MATCHED_POINTS_SHP else None,
+            },
         },
         "monitoring": {
             "mode": MONITORING_MODE,
@@ -521,10 +616,10 @@ def export_and_lock(bounds_gdf, support_gdf, mon_gdf, points_gdf, df_u, twin_rep
 def run_reference_area_lock(base_dirs=None, output_dir=None, passed_df=None, meta=None, twin_report=None, verbose=True):
     """Returns: bounds_gdf, mon_gdf, fig_diag, out_dir, manifest"""
     if base_dirs is None:
-        candidate = Path("/content/content/MyDrive/STARR_Idiofa_New/STARR_outputs/Idiofa_Lobi_2018_buf50km_excl5km_WRB2_v04_raster/03_twin_test")
-        base_dirs = [candidate] if candidate.exists() else []
-        if not base_dirs:
-            raise RuntimeError("base_dirs non fornito e directory default non trovata.")
+        raise RuntimeError(
+            "base_dirs non fornito. Passare base_dirs=[out03] dal runner "
+            "oppure specificare la directory di output dello Step 03."
+        )
     base_dirs = [Path(b) for b in base_dirs]
     out_dir = Path(output_dir) if output_dir else base_dirs[0].parent / "04_reference_area_lock"
     out_dir.mkdir(parents=True, exist_ok=True)

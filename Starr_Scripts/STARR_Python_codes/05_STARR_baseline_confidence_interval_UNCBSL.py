@@ -132,7 +132,7 @@ if not _is_notebook():
 # USER PARAMETERS
 # ================================================================
 
-RUN_ID = "Idiofa_Lobi_2018_buf50km_excl5km_WRB2_v06_raster"
+RUN_ID = "Idiofa_Lobi_2018_buf20km_excl5km_WRB2_v06_raster"
 PROJECT_NAME = "Idiofa_Lobi"
 
 BASE_DIR_CANDIDATES = [

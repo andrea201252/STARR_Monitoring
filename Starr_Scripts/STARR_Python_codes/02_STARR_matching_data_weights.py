@@ -34,6 +34,7 @@ Hard calipers (GS STARR Annex 1 Table A.3):
 import warnings
 warnings.filterwarnings("ignore")
 
+import gc
 import json
 import time
 from pathlib import Path
@@ -45,7 +46,6 @@ import matplotlib
 import matplotlib.pyplot as plt
 
 from scipy.linalg import cholesky as scipy_cholesky
-from sklearn.ensemble import RandomForestClassifier
 from sklearn.neighbors import NearestNeighbors
 from sklearn.preprocessing import StandardScaler
 from sklearn.covariance import LedoitWolf
@@ -66,12 +66,22 @@ if not _is_notebook():
 
 # ── PARAMETRI MANUALI ────────────────────────────────────────────────
 
-K_NEIGHBOURS          = 20
-KNN_QUERY_CANDIDATES  = 300   # ≥ K_NEIGHBOURS; aumentare se molti unmatched
-N_DONOR_SAMPLE        = None  # None = tutti; es. 500_000 per velocizzare
+K_NEIGHBOURS          = 1
+KNN_QUERY_CANDIDATES  = 150   # candidati per pixel; adattativi al pool size
+N_DONOR_SAMPLE        = 300_000
 ALLOW_TEXTURE_FALLBACK = False
 MAX_DONOR_REUSE       = 1
-DONOR_REUSE_PENALTY   = 0.35
+
+# ── BATCH KNN (FIX RAM) ───────────────────────────────────────────────
+# zp_w NON viene mai precalcolato per tutti i project pixel.
+# Lo scaling+whitening avviene on-the-fly per ogni batch.
+# Memoria per batch: KNN_BATCH_SIZE × n_cov × 8 byte (es. 4096 × 20 × 8 = 640 KB)
+# invece di 106K × n_cov × 8 = 17 MB tenuto in RAM permanentemente.
+KNN_BATCH_SIZE        = 4096  # project pixel per query KNN (on-the-fly whitened)
+KNN_N_JOBS            = -1
+KNN_LEAF_SIZE         = 60
+SCALER_FIT_MAX_ROWS   = 60_000   # campione per fit StandardScaler (proj+donor mix)
+COV_FIT_MAX_ROWS      = 40_000   # campione per LedoitWolf (proj+donor mix)
 
 # ── FIXED (GS STARR Annex 1 Table A.3) ───────────────────────────────
 
@@ -192,75 +202,45 @@ def auto_prefilter_donor(proj_df, donor_df, cont_covs):
     return out.reset_index(drop=True)
 
 
-# ── RF WEIGHTS ────────────────────────────────────────────────────────
-
-def compute_rf_weights(proj_df, donor_df, cont_covs):
+def build_plain_mahalanobis(z_sample, cont_covs):
     """
-    RF binario project(1) vs donor(0) → feature importance → pesi Mahalanobis.
-    
-    Adattato dalla logica del QGIS PlotMatcherAlgorithm:
-      - usa la stessa metrica Mahalanobis (Σ^-1)
-      - ma pesi derivati dalla discriminazione RF invece di uniformi
+    Plain Mahalanobis: Sigma^-1 via LedoitWolf su un campione.
+
+    FIX METH: rimossi i pesi RF (metodologicamente scorretti per GS STARR).
+    La metrica è la plain D(i,j) = sqrt((Xi-Xj)' Sigma^-1 (Xi-Xj)).
+
+    FIX RAM: accetta solo un campione (z_sample, al massimo COV_FIT_MAX_ROWS righe),
+    non l'intero array z_proj+z_donor (che sarebbe 406K righe in RAM).
+
+    Restituisce (metric=Sigma^-1+ridge, cov_orig=Sigma).
     """
-    rng = np.random.default_rng(42)
-    X_p = proj_df[cont_covs].dropna().values
-    X_d = donor_df[cont_covs].dropna().values
-    if len(X_p) == 0 or len(X_d) == 0:
-        raise RuntimeError("Project o donor vuoti dopo dropna.")
-
-    n_auto = int(min(50_000, max(1, np.sqrt(len(X_d)) * 100)))
-    n_p    = min(len(X_p), n_auto)
-    n_d    = min(len(X_d), n_auto)
-    X = np.vstack([X_p[rng.choice(len(X_p), n_p, replace=False)],
-                   X_d[rng.choice(len(X_d), n_d, replace=False)]])
-    y = np.concatenate([np.ones(n_p), np.zeros(n_d)])
-
-    print(f"    RF: {n_p:,} project + {n_d:,} donor px...")
-    t0 = time.time()
-    rf  = RandomForestClassifier(n_estimators=300, max_depth=10,
-                                  min_samples_leaf=20, random_state=42,
-                                  n_jobs=-1, class_weight="balanced_subsample")
-    rf.fit(X, y)
-    print(f"    RF fit in {time.time()-t0:.1f}s")
-
-    raw_imp = np.asarray(rf.feature_importances_, dtype=float)
-    if not np.isfinite(raw_imp).all() or raw_imp.sum() <= 0:
-        raw_imp = np.ones(len(cont_covs), float) / len(cont_covs)
-
-    soft    = np.exp(raw_imp) / np.exp(raw_imp).sum()
-    weights = 0.5 + soft * (len(cont_covs) * 0.5)
-    wdict   = {c: float(w) for c, w in zip(cont_covs, weights)}
-
-    imp_df = pd.DataFrame({"covariate": cont_covs,
-                            "rf_importance": raw_imp,
-                            "knn_weight": weights}) \
-              .sort_values("rf_importance", ascending=False).reset_index(drop=True)
-    max_imp = float(imp_df["rf_importance"].max()) or 1e-12
-    print("\n    Feature importance → KNN weights:")
-    for _, row in imp_df.iterrows():
-        bar = "#" * int(row["rf_importance"]/max_imp * 40)
-        print(f"    {row['covariate']:20s} imp={row['rf_importance']:.4f} "
-              f"w={row['knn_weight']:.3f} {bar}")
-    return wdict, imp_df
+    n_cov = len(cont_covs)
+    lw = LedoitWolf(assume_centered=False)
+    lw.fit(z_sample.astype(np.float64))
+    cov    = lw.covariance_ + RIDGE_REG * np.eye(n_cov)
+    metric = np.linalg.inv(cov) + RIDGE_REG * np.eye(n_cov)
+    return metric, lw.covariance_
 
 
-# ── MAHALANOBIS / WHITENING ───────────────────────────────────────────
+# ── GC CONDIZIONALE ──────────────────────────────────────────────────
 
-def build_vi_weighted(z_proj, z_donor, weights_dict, cont_covs):
-    """
-    Σ^-1 pesata LedoitWolf.
-    Equivalente al QGIS PlotMatcher che usa np.linalg.inv(np.cov(X.T)),
-    ma con LedoitWolf (più stabile su n < p) e pesi data-driven.
-    """
-    z_all = np.vstack([z_proj, z_donor])
-    lw    = LedoitWolf(assume_centered=False)
-    lw.fit(z_all)
-    cov   = lw.covariance_ + RIDGE_REG * np.eye(len(cont_covs))
-    vi    = np.linalg.inv(cov)
-    w_vec = np.array([max(float(weights_dict.get(c, 1.0)), 1e-9) for c in cont_covs])
-    S     = np.diag(np.sqrt(w_vec))
-    metric = S @ vi @ S
-    return metric + RIDGE_REG * np.eye(len(cont_covs))
+try:
+    import psutil as _psutil; _PSUTIL = True
+except ImportError:
+    _PSUTIL = False
+
+_GC_RAM_TRESH = 0.82
+
+def _gc(force=False):
+    """GC solo se RAM > soglia o force=True. Evita overhead nel hot loop."""
+    if force: gc.collect(); return
+    if _PSUTIL and _psutil.virtual_memory().percent / 100.0 > _GC_RAM_TRESH:
+        gc.collect()
+
+
+def adaptive_k(n_donor_pool, base_k=KNN_QUERY_CANDIDATES):
+    """Candidates adattativi: se il pool è piccolo, interroga tutto."""
+    return max(K_NEIGHBOURS, min(base_k, int(n_donor_pool * 0.95), n_donor_pool))
 
 
 def build_whitening_matrix(metric):
@@ -397,31 +377,65 @@ def run_matching(proj_df, donor_df, weights_dict, cont_covs, meta):
     print(f"      slope         : ±{CALIPER_SLOPE_DEG:.0f}°")
     print(f"      dist_roads    : ±{CALIPER_ROADS_KM:.1f} km")
 
-    # Scaling + whitening
-    scaler = StandardScaler()
-    z_all  = scaler.fit_transform(pd.concat([proj_df[cont_covs],
-                                              donor_df[cont_covs]], ignore_index=True))
-    z_proj  = z_all[:len(proj_df)]
-    z_donor = z_all[len(proj_df):]
-    L       = build_whitening_matrix(build_vi_weighted(z_proj, z_donor, weights_dict, cont_covs))
-    zp_w    = z_proj  @ L
-    zd_w    = z_donor @ L
-    print(f"    Whitening OK | z_proj={zp_w.shape} | z_donor={zd_w.shape}")
+    # ── SCALING + WHITENING + KNN BATCH (FIX RAM) ───────────────────────
+    #
+    # PROBLEMA (OOM con 106K project pixel):
+    #   z_all = scaler.fit_transform(pd.concat([proj, donor]))  -> 406K x n_cov RAM
+    #   zp_w  = z_proj @ L                                      -> 106K x n_cov permanente
+    #   knn.kneighbors(zp_w[proj_idx]) su tutti 106K            -> (106K x 300) x 16 byte = 508 MB output
+    #
+    # FIX: zp_w NON viene mai precalcolato per tutti i project pixel.
+    # Scale + whitening vengono applicati on-the-fly per KNN_BATCH_SIZE pixel alla volta.
+    # RAM per batch: 4096 x n_cov x 8 = 640 KB invece di 17 MB in RAM permanente.
 
-    # Pre-estrai array numpy dal donor (elimina bottleneck pandas iloc nel loop)
-    donor_df = donor_df.copy().reset_index(drop=True)
-    donor_arr = _build_donor_arrays(donor_df, cont_covs, tenure_col, ctx)
-    donor_reuse = np.zeros(len(donor_df), dtype=int)
+    rng   = np.random.default_rng(42)
+    n_cov = len(cont_covs)
+
+    # 1. Fit scaler su campione (no concat full proj+donor in RAM)
+    n_p_s = min(len(proj_df),  SCALER_FIT_MAX_ROWS // 2)
+    n_d_s = min(len(donor_df), SCALER_FIT_MAX_ROWS // 2)
+    Xp_s  = proj_df.iloc[rng.choice(len(proj_df),  n_p_s, replace=False)][cont_covs].to_numpy(dtype=np.float64)
+    Xd_s  = donor_df.iloc[rng.choice(len(donor_df), n_d_s, replace=False)][cont_covs].to_numpy(dtype=np.float64)
+    scaler = StandardScaler()
+    scaler.fit(np.vstack([Xp_s, Xd_s]))
+
+    # 2. LedoitWolf su campione scalato (no concat intero proj+donor)
+    z_samp = np.vstack([scaler.transform(Xp_s), scaler.transform(Xd_s)]).astype(np.float64)
+    del Xp_s, Xd_s
+    metric, cov_orig = build_plain_mahalanobis(z_samp, cont_covs)
+    del z_samp
+    L = build_whitening_matrix(metric).astype(np.float64)
+
+    # 3. Trasforma + whiten TUTTO il donor (necessario per l'indice KNN)
+    #    Max 300K x n_cov x 8 = 48 MB — accettabile
+    Xd_full = donor_df[cont_covs].to_numpy(dtype=np.float64)
+    zdw     = (scaler.transform(Xd_full) @ L).astype(np.float64)
+    del Xd_full
+    gc.collect()
+
+    # 4. KNN globale su tutto il donor whitened (costruito UNA SOLA VOLTA)
+    k_global = min(max(K_NEIGHBOURS, KNN_QUERY_CANDIDATES), len(zdw))
+    knn_global = NearestNeighbors(
+        n_neighbors=k_global, metric="euclidean",
+        algorithm="ball_tree", leaf_size=KNN_LEAF_SIZE, n_jobs=KNN_N_JOBS
+    )
+    knn_global.fit(zdw)
+    print(f"    KNN globale: {len(zdw):,} donor | k={k_global} | n_jobs={KNN_N_JOBS}")
+    print(f"    FIX RAM: zp_w on-the-fly per batch di {KNN_BATCH_SIZE} px (mai 106K in memoria)")
+
+    donor_df   = donor_df.reset_index(drop=True)
+    donor_arr  = _build_donor_arrays(donor_df, cont_covs, tenure_col, ctx)
+    donor_reuse = np.zeros(len(donor_df), dtype=np.int32)
 
     available_set = set(donor_df["texture_class"].dropna().unique())
-    print(f"    Texture groups donor disponibili: {sorted(available_set)}")
+    print(f"    Texture groups donor: {sorted(available_set)}")
 
     records, tex_rows, unmatched_rows = [], [], []
-    run_id = meta.get("run_id", "")
+    run_id   = meta.get("run_id", "")
     t0_total = time.time()
 
     for texture, proj_sub in proj_df.groupby("texture_class", sort=True):
-        proj_idx = proj_sub.index.to_numpy(dtype=int)
+        proj_idx = proj_sub.index.to_numpy(dtype=np.int64)
 
         if texture in available_set:
             allowed, exact = [texture], True
@@ -432,98 +446,109 @@ def run_matching(proj_df, donor_df, weights_dict, cont_covs, meta):
             allowed, exact = [], False
 
         if not allowed:
-            print(f"    SKIP texture '{texture}': nessun donor disponibile.")
+            print(f"    SKIP texture '{texture}': nessun donor.")
             for pi in proj_idx:
-                unmatched_rows.append({"proj_idx": int(pi),
-                                       "proj_texture": str(texture),
+                unmatched_rows.append({"proj_idx": int(pi), "proj_texture": str(texture),
                                        "reason": "no_texture_donor"})
             continue
 
-        # Subset donor per texture
         d_mask   = np.isin(donor_arr["texture_class"], [str(a) for a in allowed])
-        d_global = np.where(d_mask)[0]  # indici globali nel donor_df
-        if len(d_global) == 0:
+        d_global = np.where(d_mask)[0]
+        if not len(d_global):
             continue
 
-        # KNN — query su candidati whitened
-        k_query = min(int(max(K_NEIGHBOURS, KNN_QUERY_CANDIDATES)), len(d_global))
-        knn     = NearestNeighbors(n_neighbors=k_query, metric="euclidean",
-                                   algorithm="ball_tree", leaf_size=40, n_jobs=-1)
-        knn.fit(zd_w[d_global])
-        dists, loc_idx = knn.kneighbors(zp_w[proj_idx])
-        # loc_idx: indici locali nel subset d_global; d_global[loc_idx[i]] = indice globale
+        k_query = adaptive_k(len(d_global))
 
-        n_matched = 0
-        n_unmatched = 0
-        rejected_total = 0
+        n_matched = n_unmatched = rejected_total = 0
+        dist_sum  = dist_n = 0.0
 
-        for row in range(len(proj_idx)):
-            pi = int(proj_idx[row])
-            pr = proj_df.loc[pi]
+        # ── BATCH LOOP: scale+whiten on-the-fly per KNN_BATCH_SIZE pixel ──────
+        for start in range(0, len(proj_idx), KNN_BATCH_SIZE):
+            batch = proj_idx[start : start + KNN_BATCH_SIZE]
 
-            # Candidati KNN → indici globali nel donor_df
-            cand_global = d_global[loc_idx[row]]   # shape (k_query,)
+            # ON-THE-FLY: scala + whiten solo questo batch
+            # RAM: KNN_BATCH_SIZE x n_cov x 8 = 640 KB (non 17 MB)
+            Xp_b  = proj_df.loc[batch, cont_covs].to_numpy(dtype=np.float64)
+            zpw_b = (scaler.transform(Xp_b) @ L).astype(np.float64)
+            del Xp_b
 
-            # VECTORIZED caliper check su tutti i candidati in una sola passata
-            passes, n_rej = _check_calipers_vectorized(pr, cand_global, donor_arr, ctx, tenure_col)
-            rejected_total += n_rej
+            # Query KNN globale
+            dists_g, idx_g = knn_global.kneighbors(zpw_b)
+            del zpw_b
 
-            passing_local = np.where(passes)[0]  # posizioni in cand_global che passano
+            for row_i in range(len(batch)):
+                pi = int(batch[row_i])
+                pr = proj_df.loc[pi]
 
-            if len(passing_local) == 0:
-                n_unmatched += 1
-                unmatched_rows.append({
-                    "proj_idx": pi,
-                    "proj_lon": float(pr["lon"]),
-                    "proj_lat": float(pr["lat"]),
-                    "proj_texture": str(texture),
-                    "reason": "no_candidate_passed_hard_calipers",
-                    "queried_n": int(k_query),
+                # Filtra per texture sul risultato globale
+                cands_all   = idx_g[row_i]
+                dists_all   = dists_g[row_i]
+                tex_ok      = np.isin(donor_arr["texture_class"][cands_all],
+                                       [str(a) for a in allowed])
+                cand_global = cands_all[tex_ok][:k_query]
+                cand_dists  = dists_all[tex_ok][:k_query]
+
+                if len(cand_global) == 0:
+                    n_unmatched += 1
+                    unmatched_rows.append({"proj_idx": pi, "proj_texture": str(texture),
+                                           "reason": "no_texture_compatible_in_knn"})
+                    continue
+
+                dist_sum += float(cand_dists[0]); dist_n += 1
+                passes, n_rej = _check_calipers_vectorized(pr, cand_global, donor_arr, ctx, tenure_col)
+                rejected_total += n_rej
+                passing_local = np.where(passes)[0]
+
+                if not len(passing_local):
+                    n_unmatched += 1
+                    unmatched_rows.append({"proj_idx": pi, "proj_texture": str(texture),
+                                           "reason": "no_candidate_passed_hard_calipers",
+                                           "queried_n": int(k_query)})
+                    continue
+
+                best_local  = int(passing_local[0])
+                best_global = int(cand_global[best_local])
+                best_dist   = float(cand_dists[best_local])
+                reuse       = int(donor_reuse[best_global])
+                exceeded    = bool(reuse >= MAX_DONOR_REUSE)
+                donor_reuse[best_global] += 1
+
+                dr  = donor_df.iloc[best_global]
+                rec = {c: dr.get(c) for c in donor_df.columns if c != "_gidx"}
+                rec.update({
+                    "run_id":         run_id,
+                    "ref_lon":        float(dr["lon"]),
+                    "ref_lat":        float(dr["lat"]),
+                    "proj_lon":       float(pr["lon"]),
+                    "proj_lat":       float(pr["lat"]),
+                    "match_distance": best_dist,
+                    "match_rank":     int(best_local + 1),
+                    "proj_idx":       pi,
+                    "proj_texture":   str(texture),
+                    "ref_texture":    str(dr.get("texture_class", "")),
+                    "texture_exact":  bool(exact),
+                    "reuse_exceeded": exceeded,
+                    "all_calipers_passed": True,
+                    "hard_caliper_rejected_before_selected": n_rej,
                 })
-                continue
+                for c in ["SOC_g_kg", "NDVI_t0", "elevation", "slope_deg", "dist_roads_km"]:
+                    if c in pr.index and c in dr.index:
+                        rec[f"proj_{c}"] = float(pr[c])
+                        rec[f"ref_{c}"]  = float(dr[c])
+                        rec[f"diff_{c}"] = float(dr[c]) - float(pr[c])
+                records.append(rec)
+                n_matched += 1
 
-            # Prendi il primo passante (distanza minima — già ordinato da KNN)
-            best_local  = int(passing_local[0])
-            best_global = int(cand_global[best_local])
-            best_dist   = float(dists[row, best_local])
-
-            reuse    = int(donor_reuse[best_global])
-            exceeded = bool(reuse >= MAX_DONOR_REUSE)
-            donor_reuse[best_global] += 1
-
-            # Costruisci record usando iloc una sola volta
-            dr = donor_df.iloc[best_global]
-            rec = {c: dr.get(c) for c in donor_df.columns if c != "_gidx"}
-            rec.update({
-                "run_id":                       run_id,
-                "ref_lon":                      float(dr["lon"]),
-                "ref_lat":                      float(dr["lat"]),
-                "proj_lon":                     float(pr["lon"]),
-                "proj_lat":                     float(pr["lat"]),
-                "match_distance":               best_dist,
-                "match_rank":                   int(best_local + 1),
-                "proj_idx":                     pi,
-                "proj_texture":                 str(texture),
-                "ref_texture":                  str(dr.get("texture_class", "")),
-                "texture_exact":                bool(exact),
-                "reuse_exceeded":               exceeded,
-                "all_calipers_passed":          True,
-                "hard_caliper_rejected_before_selected": n_rej,
-            })
-            # Diff values
-            for c in ["SOC_g_kg", "NDVI_t0", "elevation", "slope_deg", "dist_roads_km"]:
-                if c in pr.index and c in dr.index:
-                    rec[f"diff_{c}"] = float(dr[c]) - float(pr[c])
-            records.append(rec)
-            n_matched += 1
+            del dists_g, idx_g
+            _gc()
 
         tex_rows.append({
             "texture": texture, "proj_n": int(len(proj_idx)),
-            "donor_n": int(len(d_global)), "k_query": int(k_query),
+            "donor_n": int(len(d_global)), "k_query": k_query,
             "exact_texture": bool(exact), "matched_n": n_matched,
             "unmatched_n": n_unmatched,
             "hard_caliper_rejected_total": int(rejected_total),
-            "mean_nn_dist_unfiltered": float(dists[:, 0].mean()),
+            "mean_nn_dist_unfiltered": float(dist_sum / dist_n) if dist_n else np.nan,
         })
         elapsed = time.time() - t0_total
         print(f"    Texture {texture:10s}: proj={len(proj_idx):,} donor={len(d_global):,} "
@@ -642,11 +667,10 @@ def run_matching_step(base_dirs=None, output_dir=None,
     Restituisce (matched_df, weights_dict, imp_df, smd_df, figs, out_dir).
     """
     if base_dirs is None:
-        cand = Path("/content/content/MyDrive/STARR_Idiofa_New/STARR_outputs/"
-                    "Idiofa_Lobi_2018_buf50km_excl5km_WRB2_v04_raster/01_extract")
-        base_dirs = [cand] if cand.exists() else []
-        if not base_dirs:
-            raise RuntimeError("base_dirs non fornito.")
+        raise RuntimeError(
+            "base_dirs non fornito. Passare base_dirs=[out01] dal runner "
+            "oppure specificare la directory di output dello Step 01."
+        )
     base_dirs = [Path(b) for b in base_dirs]
     out_dir   = Path(output_dir) if output_dir else base_dirs[0].parent / "02_matching"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -692,10 +716,10 @@ def run_matching_step(base_dirs=None, output_dir=None,
     print("\n[2] Prefilter donor (loose)...")
     donor_df = auto_prefilter_donor(proj_df, donor_df, cont_covs)
 
-    print("\n[3] RF feature importance...")
-    weights_dict, imp_df = compute_rf_weights(proj_df, donor_df, cont_covs)
+    weights_dict = {c: 1.0 for c in cont_covs}  # plain Mahalanobis: pesi uniformi (no RF)
+    imp_df = None
 
-    print("\n[4] Matching KNN + hard calipers (vectorizzato)...")
+    print("\n[3] Matching KNN plain Mahalanobis + hard calipers (batched, no RF)...")
     matched_df, tex_summary, unmatched_df = run_matching(
         proj_df, donor_df, weights_dict, cont_covs, meta)
 
@@ -718,36 +742,35 @@ def run_matching_step(base_dirs=None, output_dir=None,
     for cov, row in smd_df.iterrows():
         print(f"    {'PASS' if row['passed'] else 'FAIL':4s} {cov:20s}: SMD={row['SMD']:.4f}")
 
-    ndvi_smd_df = compute_smd(proj_df, matched_df, ndvi_year_cols) \
-                  if ndvi_year_cols else pd.DataFrame()
-    if not ndvi_smd_df.empty:
-        print("\n    Annual NDVI balance:")
-        for cov, row in ndvi_smd_df.iterrows():
-            print(f"    {'PASS' if row['passed'] else 'FAIL':4s} {cov:20s}: SMD={row['SMD']:.4f}")
+    # ndvi_smd_df = compute_smd(proj_df, matched_df, ndvi_year_cols) \
+    #               if ndvi_year_cols else pd.DataFrame()
+    # if not ndvi_smd_df.empty:
+    #     print("\n    Annual NDVI balance:")
+    #     for cov, row in ndvi_smd_df.iterrows():
+    #         print(f"    {'PASS' if row['passed'] else 'FAIL':4s} {cov:20s}: SMD={row['SMD']:.4f}")
 
     caliper_audit = compute_caliper_audit(matched_df)
 
     print("\n[6] Plot + salvataggio...")
-    fig_w = plot_rf_weights(imp_df, out_dir)
     fig_s = plot_smd(smd_df, out_dir, "SMD_lollipop.png", "Mandatory covariate balance")
     fig_d = plot_match_distances(matched_df, out_dir)
-    fig_n = plot_smd(ndvi_smd_df, out_dir, "SMD_annual_NDVI.png",
-                     "Annual NDVI balance") if not ndvi_smd_df.empty else None
+    # fig_n = plot_smd(ndvi_smd_df, out_dir, "SMD_annual_NDVI.png",
+                    #  "Annual NDVI balance") if not ndvi_smd_df.empty else None
 
     matched_df.to_parquet(out_dir / "reference_area_pixels.parquet", index=False)
     matched_df.to_csv(out_dir / "reference_area_pixels.csv", index=False)
     unmatched_df.to_csv(out_dir / "unmatched_project_pixels.csv", index=False)
-    imp_df.to_csv(out_dir / "feature_importance.csv", index=False)
+    # imp_df.to_csv(out_dir / "feature_importance.csv", index=False)
     smd_df.to_csv(out_dir / "SMD_table.csv")
-    if not ndvi_smd_df.empty:
-        ndvi_smd_df.to_csv(out_dir / "SMD_annual_NDVI_table.csv")
+    # if not ndvi_smd_df.empty:
+        # ndvi_smd_df.to_csv(out_dir / "SMD_annual_NDVI_table.csv")
     tex_summary.to_csv(out_dir / "texture_summary.csv", index=False)
     caliper_audit.to_csv(out_dir / "caliper_audit.csv", index=False)
 
     summary = {
         "run_id":                meta.get("run_id",""),
         "timestamp_utc":         datetime.now(timezone.utc).isoformat(),
-        "matching_method":       "Hard-caliper vectorized weighted Mahalanobis KNN",
+        "matching_method":       "Plain Mahalanobis KNN batched on-the-fly (no RF weights)",
         "donor_pool_rule":       "Non-Forest at T0, >5km from PA (GEE Annex A.2.2 Step A)",
         "k_neighbours":          int(K_NEIGHBOURS),
         "knn_query_candidates":  int(KNN_QUERY_CANDIDATES),
@@ -760,7 +783,7 @@ def run_matching_step(base_dirs=None, output_dir=None,
         "reuse_exceeded_n":      int(reuse_n),
         "SMD_max":               float(smd_df["SMD"].max()),
         "SMD_all_passed":        bool(smd_df["passed"].all()),
-        "NDVI_annual_SMD_max":   None if ndvi_smd_df.empty else float(ndvi_smd_df["SMD"].max()),
+        # "NDVI_annual_SMD_max":   None if ndvi_smd_df.empty else float(ndvi_smd_df["SMD"].max()),
         "hard_calipers_all_passed": bool(matched_df["all_calipers_passed"].all())
                                     if "all_calipers_passed" in matched_df.columns else False,
         "cont_covs":             cont_covs,
@@ -775,12 +798,13 @@ def run_matching_step(base_dirs=None, output_dir=None,
         print(f"  Matched          : {n_matched:,}")
         print(f"  Unmatched        : {n_unmatch:,}")
         print(f"  SMD max          : {smd_df['SMD'].max():.4f}")
-        if not ndvi_smd_df.empty:
-            print(f"  NDVI SMD max     : {ndvi_smd_df['SMD'].max():.4f}")
+        # if not ndvi_smd_df.empty:
+        #     print(f"  NDVI SMD max     : {ndvi_smd_df['SMD'].max():.4f}")
         print(f"  Output           : {out_dir}")
         print(f"{'='*60}")
 
-    figs = {"weights": fig_w, "smd": fig_s, "distances": fig_d, "ndvi_smd": fig_n}
+    # figs = {"smd": fig_s, "distances": fig_d, "ndvi_smd": fig_n}
+    figs = {"smd": fig_s, "distances": fig_d}
     return matched_df, weights_dict, imp_df, smd_df, figs, out_dir
 
 
