@@ -483,8 +483,8 @@ def run_twin_test(base_dirs=None, output_dir=None, matched_df=None,
         print("    " + "!" * 56)
         print("    ATTENZIONE: il twin/parallel-trend test NON è passato.")
         print("    I pixel selezionati sono 'best available' e NON conformi.")
-        print("    Step 04 si fermerà a meno che non venga forzato esplicitamente")
-        print("    (allow_noncompliant_twin=True). Documentare nel PDD.")
+        print("    Step 04 si fermerà: vanno usati solo i pixel conformi.")
+        print("    Rivedere Step 02/03 e documentare nel PDD.")
         print("    " + "!" * 56)
 
     print("[4] Grafici + export")
@@ -514,8 +514,8 @@ def run_twin_test(base_dirs=None, output_dir=None, matched_df=None,
         "proceed_recommended":proceed_recommended,
         "compliance_note":(
             "Se twin_test_compliant=False i pixel selezionati sono 'best available' "
-            "e non hanno superato il parallel-trend test aggregato. Step 04 li rifiuta "
-            "salvo override esplicito (allow_noncompliant_twin=True)."
+            "e non hanno superato il parallel-trend test aggregato. Step 04 li rifiuta: "
+            "vanno usati solo i pixel conformi, non è previsto alcun override."
         ),
         "next_step":"04_STARR_reference_area_lock.py",
     }

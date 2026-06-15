@@ -61,8 +61,7 @@ def main(run_step_05: bool = True,
          run_id_base: str = RUN_ID_BASE,
          base_dir: str = BASE_DIR,
          fnf_shapefile: str | None = FNF_SHAPEFILE,
-         eligible_shapefile: str | None = ELIGIBLE_SHAPEFILE,
-         allow_noncompliant_twin: bool = False) -> dict:
+         eligible_shapefile: str | None = ELIGIBLE_SHAPEFILE) -> dict:
     """
     Esegue la pipeline STARR completa con l'estensione donor scelta.
 
@@ -125,7 +124,7 @@ def main(run_step_05: bool = True,
     # ── STEP 04 ───────────────────────────────────────────────────────
     bounds_gdf, mon_gdf, fig04, out04, manifest = s04.run_reference_area_lock(
         base_dirs=[out03], passed_df=twin_pixels, meta=meta,
-        twin_report=twin_report, allow_noncompliant_twin=allow_noncompliant_twin,
+        twin_report=twin_report,
     )
 
     # Metriche aggregate per il comparatore 00b

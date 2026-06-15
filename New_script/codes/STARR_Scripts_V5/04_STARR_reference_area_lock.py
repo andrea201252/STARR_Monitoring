@@ -634,8 +634,6 @@ def export_and_lock(bounds_gdf, support_gdf, mon_gdf, points_gdf, df_u, twin_rep
         },
         "twin_test_summary": twin_report or {},
         "twin_test_compliant": twin_report.get("twin_test_compliant", None) if twin_report else None,
-        "twin_noncompliant_override_used": bool(allow_noncompliant_twin and
-                                                twin_report.get("twin_test_compliant") is False),
         "covariate_summary": cov_df.set_index("covariate").to_dict() if not cov_df.empty else {},
         "files_sha256": sha,
         "lock_status": "LOCKED",
@@ -651,12 +649,11 @@ def export_and_lock(bounds_gdf, support_gdf, mon_gdf, points_gdf, df_u, twin_rep
 # ================================================================
 
 def run_reference_area_lock(base_dirs=None, output_dir=None, passed_df=None, meta=None,
-                            twin_report=None, allow_noncompliant_twin=False, verbose=True):
+                            twin_report=None, verbose=True):
     """Restituisce: bounds_gdf, mon_gdf, fig_diag, out_dir, manifest
 
-    allow_noncompliant_twin : se False (default) e il twin test NON è conforme
-        (twin_test_compliant=False nel report Step 03), Step 04 si ferma.
-        Impostare True solo con decisione esplicita del PM documentata nel PDD.
+    Se il twin test NON è conforme (twin_test_compliant=False nel report Step 03)
+    Step 04 si ferma: vanno usati solo i pixel conformi, non esiste alcun override.
     """
     if base_dirs is None:
         raise RuntimeError(
@@ -681,9 +678,10 @@ def run_reference_area_lock(base_dirs=None, output_dir=None, passed_df=None, met
         rp = base_dirs[0] / "twin_test_report.json"
         twin_report = json.load(open(rp, encoding="utf-8")) if rp.exists() else {}
 
-    # B4 fix: blocca se il twin test non è conforme, salvo override esplicito.
+    # B4 fix: blocca se il twin test non è conforme. Vanno usati solo i pixel
+    # conformi, quindi non è previsto alcun override.
     twin_compliant = twin_report.get("twin_test_compliant", None)
-    if twin_compliant is False and not allow_noncompliant_twin:
+    if twin_compliant is False:
         raise RuntimeError(
             "STEP 04 bloccato: il twin/parallel-trend test NON è conforme "
             f"(selection_mode='{twin_report.get('selection_mode')}', "
@@ -691,12 +689,8 @@ def run_reference_area_lock(base_dirs=None, output_dir=None, passed_df=None, met
             "I pixel selezionati sono 'best available' e non hanno superato il test "
             "aggregato; costruire la Reference Area su di essi non è difendibile in "
             "validazione.\nAzioni: rivedere Step 02/03 (rilassare PAIR_SLOPE_DIFF_MAX, "
-            "ampliare la finestra pre-intervento, ricontrollare il donor pool), "
-            "oppure forzare con allow_noncompliant_twin=True documentando nel PDD."
+            "ampliare la finestra pre-intervento, ricontrollare il donor pool)."
         )
-    if twin_compliant is False and allow_noncompliant_twin:
-        print("    WARNING: twin test NON conforme — proceduto con override esplicito "
-              "(allow_noncompliant_twin=True).")
 
     if passed_df is None:
         passed_df = load_df(find_file(base_dirs, "twin_tested_pixels"))
