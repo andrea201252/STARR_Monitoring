@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 GS STARR Track 1 SEMDB — 00b_STARR_compare_extents.py
-Multi-extent comparison runner.
+Runner di confronto multi-extent.
 
 Esegue la pipeline Steps 01-04 per ogni extent in COMPARE_EXTENTS,
 aggrega le metriche dai JSON prodotti da ogni step e genera:
@@ -85,7 +85,7 @@ def load_module(filename: str, name: str):
     return mod
 
 
-# ── METRICS EXTRACTION ────────────────────────────────────────────────
+# ── ESTRAZIONE METRICHE ───────────────────────────────────────────────
 
 def _load_json(path: Path) -> dict:
     if path.exists():
@@ -182,7 +182,7 @@ def extract_metrics(run_result: dict) -> dict:
     }
 
 
-# ── SUFFICIENCY CHECK ─────────────────────────────────────────────────
+# ── VERIFICA SUFFICIENZA ──────────────────────────────────────────────
 
 def find_minimum_sufficient_extent(metrics_list: list[dict]) -> dict | None:
     """
@@ -200,7 +200,7 @@ def find_minimum_sufficient_extent(metrics_list: list[dict]) -> dict | None:
     return None
 
 
-# ── PLOTS ─────────────────────────────────────────────────────────────
+# ── GRAFICI ───────────────────────────────────────────────────────────
 
 def _extent_label(e) -> str:
     return "FULL" if e == "full" else f"{e}km"
@@ -214,10 +214,10 @@ def plot_comparison(metrics_list: list[dict],
                     out_path: Path | None = None) -> plt.Figure:
     """
     4 panel comparativi:
-      A — n_donor + ratio 3× threshold
-      B — match_coverage_pct + 90% threshold
-      C — twin_pass_pct + 30% threshold
-      D — smd_max + 0.10 threshold
+      A — n_donor + soglia ratio 3×
+      B — match_coverage_pct + soglia 90%
+      C — twin_pass_pct + soglia 30%
+      D — smd_max + soglia 0.10
     Più una riga inferiore con la heatmap criteri per extent.
     """
     labels   = [_extent_label(m["extent_km"]) for m in metrics_list]
@@ -240,7 +240,7 @@ def plot_comparison(metrics_list: list[dict],
     ax.set_xticks(x); ax.set_xticklabels(labels, fontsize=8)
     ax.yaxis.set_major_formatter(
         plt.FuncFormatter(lambda v, _: f"{int(v):,}"))
-    ax.set_title("A — Donor pool size\n(verde = soddisfa 3×)",
+    ax.set_title("A — Dimensione pool donor\n(verde = soddisfa 3×)",
                  fontsize=9, fontweight="bold")
     ax.set_ylabel("n pixel donor", fontsize=8)
     ax.legend(fontsize=7); ax.grid(axis="y", alpha=0.35, zorder=0)
@@ -258,9 +258,9 @@ def plot_comparison(metrics_list: list[dict],
                label=f"Soglia {THRESH_MATCH_COV_PCT:.0f}%")
     ax.set_xticks(x); ax.set_xticklabels(labels, fontsize=8)
     ax.set_ylim(0, 105)
-    ax.set_title("B — Match coverage %\n(verde = ≥90%)",
+    ax.set_title("B — Copertura match %\n(verde = ≥90%)",
                  fontsize=9, fontweight="bold")
-    ax.set_ylabel("% project px matched", fontsize=8)
+    ax.set_ylabel("% px progetto matchati", fontsize=8)
     ax.legend(fontsize=7); ax.grid(axis="y", alpha=0.35, zorder=0)
     for xi, v in zip(x, vals):
         ax.text(xi, v + 1, f"{v:.1f}%", ha="center", va="bottom", fontsize=7)
@@ -275,7 +275,7 @@ def plot_comparison(metrics_list: list[dict],
                label=f"Soglia {THRESH_TWIN_PASS_PCT:.0f}%")
     ax.set_xticks(x); ax.set_xticklabels(labels, fontsize=8)
     ax.set_ylim(0, 105)
-    ax.set_title("C — Twin test pass %\n(verde = ≥30%)",
+    ax.set_title("C — Twin test superato %\n(verde = ≥30%)",
                  fontsize=9, fontweight="bold")
     ax.set_ylabel("% coppie con trend parallelo", fontsize=8)
     ax.legend(fontsize=7); ax.grid(axis="y", alpha=0.35, zorder=0)
@@ -337,7 +337,7 @@ def plot_comparison(metrics_list: list[dict],
                                   fill=False, edgecolor="#0d47a1", lw=3))
 
     fig.suptitle(
-        f"GS STARR — Donor Extent Comparison\n"
+        f"GS STARR — Confronto Estensione Donor\n"
         f"Progetto: {metrics_list[0]['n_project']:,} px | "
         f"Soglie: ratio≥{THRESH_RATIO_3X}× | match≥{THRESH_MATCH_COV_PCT}% | "
         f"twin≥{THRESH_TWIN_PASS_PCT}% | SMD≤{THRESH_SMD_MAX}",
@@ -352,7 +352,7 @@ def plot_comparison(metrics_list: list[dict],
     return fig
 
 
-# ── MAIN ─────────────────────────────────────────────────────────────
+# ── MAIN ──────────────────────────────────────────────────────────────
 
 def run_comparison(extents: list | None = None,
                    base_dirs: list | None = None,
@@ -364,8 +364,8 @@ def run_comparison(extents: list | None = None,
     """
     Esegue la pipeline Steps 01-04 per ogni extent e aggrega i risultati.
 
-    Parameters
-    ----------
+    Parametri
+    ---------
     extents : list | None
         Lista di estensioni. Default = COMPARE_EXTENTS.
     base_dirs : list | None
@@ -383,8 +383,8 @@ def run_comparison(extents: list | None = None,
     eligible_shapefile : str | None
         Percorso shapefile Eligible_FNF. None = filtro disattivato.
 
-    Returns
-    -------
+    Restituisce
+    -----------
     dict {
         "metrics": [dict per ogni extent],
         "minimum_sufficient": dict | None,
@@ -407,9 +407,9 @@ def run_comparison(extents: list | None = None,
     s00 = load_module("00_STARR_run_steps_01_to_05.py", "s00")
 
     print(f"\n{'═'*65}")
-    print(f"00b — Donor Extent Comparison")
-    print(f"Extents da testare : {extents}")
-    print(f"Output             : {out_dir}")
+    print(f"00b — Confronto Estensione Donor")
+    print(f"Estensioni da testare : {extents}")
+    print(f"Output                : {out_dir}")
     print(f"{'═'*65}\n")
 
     all_results   = {}
@@ -478,9 +478,9 @@ def run_comparison(extents: list | None = None,
         )
 
     print(f"\n{'═'*65}")
-    print("RECOMMENDATION")
+    print("RACCOMANDAZIONE")
     print(rec)
-    print(f"Elapsed totale: {time.time()-t_total:.0f}s")
+    print(f"Tempo totale: {time.time()-t_total:.0f}s")
     print(f"{'═'*65}")
 
     # ── Plot ─────────────────────────────────────────────────────────

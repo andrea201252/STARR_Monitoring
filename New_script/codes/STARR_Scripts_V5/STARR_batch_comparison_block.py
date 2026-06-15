@@ -1,5 +1,5 @@
 # =====================================================================
-# §8. BATCH COMPARISON — multi-source × multi-period (automatico)
+# §8. CONFRONTO BATCH — multi-sorgente × multi-periodo (automatico)
 # =====================================================================
 # Esegue Step 05 per OGNI combinazione (sorgente AGB × periodo), riusando
 # la stessa Reference Area bloccata (Step 01-04 girano UNA volta: il matching

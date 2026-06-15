@@ -2,7 +2,7 @@
 """
 ============================================================
 GS STARR – Track 1 SEMDB  |  01_STARR_raster_extract.py
-STEP 01 — Raster Extraction + Shapefile Spatial Masking
+STEP 01 — Estrazione Raster + Mascheramento Spaziale da Shapefile
 ============================================================
 
 Strategia di filtraggio:
@@ -27,7 +27,7 @@ Fix rispetto alla versione precedente:
   BUG-02  add_patch_cells: autoscale_view() esplicita (Matplotlib >= 3.6)
   BUG-03  set_limits: quantili robusti anti-outlier
   BUG-04  BLOCK_HEIGHT sempre attivo (evita OOM donor)
-  BUG-05  Donor grid: panel C mostra donor a extent completo
+  BUG-05  Griglia donor: panel C mostra donor a extent completo
   BUG-06  x_utm/y_utm calcolati in _process_block (no re-proiezione nel plot)
 """
 
@@ -66,7 +66,7 @@ from matplotlib.collections import PatchCollection
 from matplotlib.patches import Rectangle
 
 
-# ── RAM MONITOR + PURGE ──────────────────────────────────────────────
+# ── MONITOR RAM + PURGE ──────────────────────────────────────────────
 
 try:
     import psutil as _psutil
@@ -118,7 +118,7 @@ BLOCK_HEIGHT        = 2048
 PLOT_MAX_PA_BOXES    = 80_000
 PLOT_MAX_DONOR_BOXES = 50_000
 
-# ── SHAPEFILE FILTER ─────────────────────────────────────────────────
+# ── FILTRO SHAPEFILE ─────────────────────────────────────────────────
 # I due shapefile devono trovarsi su Drive nel percorso indicato.
 # Impostare a None per saltare il filtro corrispondente.
 
@@ -136,7 +136,7 @@ ELIGIBLE_SHAPEFILE = (
 # Raccomandato per poligoni precisi; mettere True per poligoni grossolani.
 SHP_ALL_TOUCHED = False
 
-# ── PA SELECTIVE EXTRACTION ───────────────────────────────────────────
+# ── ESTRAZIONE SELETTIVA PA ───────────────────────────────────────────
 PA_EDGE_EXCLUSION_ENABLED  = True
 PA_EDGE_EXCLUSION_N_PIXELS = 1
 # P1 FIX: di default NON sottocampionare la PA — prendi TUTTI i pixel.
@@ -147,7 +147,7 @@ PA_MAX_PIXELS              = 150_000
 PA_SPATIAL_GRID_STEP_M     = 150.0
 
 
-# ── PA SELECTIVE FILTERS ─────────────────────────────────────────────
+# ── FILTRI SELETTIVI PA ─────────────────────────────────────────────
 
 def exclude_edge_pixels(df, pixel_size_m=30.0):
     if not PA_EDGE_EXCLUSION_ENABLED:
@@ -158,7 +158,7 @@ def exclude_edge_pixels(df, pixel_size_m=30.0):
             (df["y_utm"] >= df["y_utm"].min() + buf) &
             (df["y_utm"] <= df["y_utm"].max() - buf))
     n_excl = int((~mask).sum())
-    print(f"    Edge exclusion ({buf:.0f}m): {n_excl:,} px rimossi")
+    print(f"    Esclusione bordo ({buf:.0f}m): {n_excl:,} px rimossi")
     return df.loc[mask].reset_index(drop=True), n_excl
 
 
@@ -174,11 +174,11 @@ def spatially_stratified_sample(df):
     work = work.sample(frac=1.0, random_state=42)
     idx = work.drop_duplicates(subset=["_gx", "_gy"], keep="first").index
     sampled = df.loc[idx].reset_index(drop=True)
-    _purge(work, label=f"spatial sample {len(df):,}->{len(sampled):,} px")
+    _purge(work, label=f"campione spaziale {len(df):,}->{len(sampled):,} px")
     return sampled, True
 
 
-# ── AUTO-DETECT ───────────────────────────────────────────────────────
+# ── RILEVAMENTO AUTOMATICO ────────────────────────────────────────────
 
 def detect_band_names(src):
     descs = src.descriptions
@@ -206,7 +206,7 @@ def detect_continuous_covariates(band_names):
             if b not in skip and not skip_pat.match(b) and b != "WRB2_CODE"]
 
 
-# ── RASTER READING ────────────────────────────────────────────────────
+# ── LETTURA RASTER ────────────────────────────────────────────────────
 
 def _process_block(data, transform, transformer, band_names, row_offset, tile_name=""):
     H, W = data.shape[1], data.shape[2]
@@ -259,7 +259,7 @@ def compute_donor_clip_window(proj_df, donor_tif_path, extent_km):
     """
     Calcola la rasterio Window sul TIF donor = bbox(proj_df) + buffer(extent_km).
 
-    Returns (window, clip_transform) oppure (None, None) se extent_km='full'.
+    Restituisce (window, clip_transform) oppure (None, None) se extent_km='full'.
 
     Il clip è a livello I/O: nessun pixel fuori dal buffer viene mai caricato
     in RAM. Il risparmio è proporzionale a (clip_area / full_donor_area).
@@ -418,7 +418,7 @@ def save_df(df, path):
 
 
 # ══════════════════════════════════════════════════════════════════════
-# SHAPEFILE SPATIAL MASKING
+# MASCHERAMENTO SPAZIALE DA SHAPEFILE
 # (rasterizzazione su griglia TIF, O(n) sulla dimensione dei pixel)
 # ══════════════════════════════════════════════════════════════════════
 
@@ -553,7 +553,7 @@ def filter_df_by_mask(df, mask, ref_transform, inside=True, label=""):
 
     print(f"    {label}: {n_removed:,} px rimossi ({msg} shapefile) "
           f"| {n_kept:,} mantenuti "
-          f"| {int(in_grid.sum() - n_kept) if inside else 0:,} out-of-grid trattati come esclusi")
+          f"| {int(in_grid.sum() - n_kept) if inside else 0:,} fuori-griglia trattati come esclusi")
 
     del xs, ys, mask_cols, mask_rows, in_grid, pixel_vals
     return df.loc[keep].reset_index(drop=True), n_kept, n_removed
@@ -591,7 +591,7 @@ def apply_shapefile_filters(df, label, proj_or_donor,
 
     print(f"\n    Filtri shapefile per {label} ({n_start:,} px input):")
 
-    # ── ELIGIBLE filter (solo donor) ──────────────────────────────────
+    # ── Filtro ELIGIBLE (solo donor) ──────────────────────────────────
     if proj_or_donor == "donor" and _elig is not None:
         print(f"    [A] Eligible_FNF: mantieni solo pixel DENTRO (non-forest eleggibili)")
         try:
@@ -602,16 +602,16 @@ def apply_shapefile_filters(df, label, proj_or_donor,
                 df, elig_mask, elig_tr, inside=True,
                 label="  Eligible_FNF (dentro=mantieni)")
             del elig_mask
-            _purge(label=f"dopo Eligible filter donor ({n_rem:,} rimossi)")
+            _purge(label=f"dopo filtro Eligible donor ({n_rem:,} rimossi)")
             ad["eligible_shp_removed_n"] = int(n_rem)
             ad["eligible_shp_kept_n"]    = int(n_kept)
         except Exception as e:
-            print(f"    WARN Eligible filter: {e}")
+            print(f"    WARN filtro Eligible: {e}")
             ad["eligible_shp_error"] = str(e)
     else:
         ad["eligible_shp_applied"] = False
 
-    # ── FNF18 filter (donor + PA) ─────────────────────────────────────
+    # ── Filtro FNF18 (donor + PA) ─────────────────────────────────────
     if _fnf is not None:
         print(f"    [B] FNF18: rimuovi pixel DENTRO (foresta a T0)")
         try:
@@ -622,11 +622,11 @@ def apply_shapefile_filters(df, label, proj_or_donor,
                 df, fnf_mask, fnf_tr, inside=True,
                 label="  FNF18 (dentro=rimuovi)")
             del fnf_mask
-            _purge(label=f"dopo FNF filter {label} ({n_rem:,} rimossi)")
+            _purge(label=f"dopo filtro FNF {label} ({n_rem:,} rimossi)")
             ad["fnf18_shp_removed_n"] = int(n_rem)
             ad["fnf18_shp_kept_n"]    = int(n_kept)
         except Exception as e:
-            print(f"    WARN FNF18 filter: {e}")
+            print(f"    WARN filtro FNF18: {e}")
             ad["fnf18_shp_error"] = str(e)
     else:
         ad["fnf18_shp_applied"] = False
@@ -636,7 +636,7 @@ def apply_shapefile_filters(df, label, proj_or_donor,
           f"({n_start-n_end:,} rimossi dai filtri shapefile)")
     if n_end == 0:
         raise RuntimeError(
-            f"Shapefile filters hanno rimosso TUTTI i pixel {label}.\n"
+            f"I filtri shapefile hanno rimosso TUTTI i pixel {label}.\n"
             "Verificare:\n"
             "  1. I path FNF_SHAPEFILE e ELIGIBLE_SHAPEFILE siano corretti.\n"
             "  2. I shapefile coprano l'area di studio.\n"
@@ -645,7 +645,7 @@ def apply_shapefile_filters(df, label, proj_or_donor,
     return df
 
 
-# ── PLOT ─────────────────────────────────────────────────────────────
+# ── GRAFICO ──────────────────────────────────────────────────────────
 
 def _boxes(ax, xmin_arr, ymin_arr, pix, face, edge, alpha, lw, label=None):
     if len(xmin_arr) == 0:
@@ -678,10 +678,10 @@ def _qlim(ax, xs_all, ys_all, pix, q=0.001, mfrac=0.04):
 def plot_aligned_pixel_grids(proj_df, donor_df, meta, out_dir=None):
     """
     Figura 1 — 4 panel:
-      A) Scatter WGS84 (overview PA + donor)
-      B) PA grid UTM (celle reali 30 m)
-      C) Donor grid UTM (extent completo donor campionato)
-      D) Zoom bordo PA est (regione densa rilevata via 2D histogram)
+      A) Scatter WGS84 (panoramica PA + donor)
+      B) Griglia PA UTM (celle reali 30 m)
+      C) Griglia donor UTM (extent completo donor campionato)
+      D) Zoom bordo PA est (regione densa rilevata via istogramma 2D)
 
     Figura 2 — dettaglio zoom UTM al centro PA.
     """
@@ -709,7 +709,7 @@ def plot_aligned_pixel_grids(proj_df, donor_df, meta, out_dir=None):
     p_idx = _samp(len(proj_df),  PLOT_MAX_PA_BOXES)
     d_idx = _samp(len(donor_df), PLOT_MAX_DONOR_BOXES)
 
-    # Panel D zoom: regione più densa via 2D histogram
+    # Panel D zoom: regione più densa via istogramma 2D
     bin_m  = pix * 25
     x_edges = np.arange(px.min()-bin_m, px.max()+2*bin_m, bin_m)
     y_edges = np.arange(py.min()-bin_m, py.max()+2*bin_m, bin_m)
@@ -726,7 +726,7 @@ def plot_aligned_pixel_grids(proj_df, donor_df, meta, out_dir=None):
     t0  = time.time()
     fig1, axes = plt.subplots(1, 4, figsize=(28, 7), facecolor="white")
 
-    # Panel A — scatter WGS84
+    # Panel A — scatter WGS84 (panoramica)
     ax = axes[0]
     n_d_sc = min(15_000, len(donor_df))
     sc_d   = rng.choice(len(donor_df), n_d_sc, replace=False)
@@ -737,28 +737,28 @@ def plot_aligned_pixel_grids(proj_df, donor_df, meta, out_dir=None):
                s=2, alpha=0.70, color="tomato",
                label=f"PA ({len(proj_df):,})")
     ax.set(xlabel="Longitudine", ylabel="Latitudine",
-           title="A — Overview WGS84\n(dopo filtri shapefile)")
+           title="A — Panoramica WGS84\n(dopo filtri shapefile)")
     ax.legend(fontsize=7, markerscale=4); ax.grid(alpha=0.3)
     ax.set_aspect("equal", adjustable="datalim")
 
-    # Panel B — PA grid UTM
+    # Panel B — Griglia PA UTM
     ax = axes[1]
     _boxes(ax, px0[p_idx], py0[p_idx], pix, "tomato", "darkred", 0.75, 0.15,
            f"PA ({len(p_idx):,}/{len(proj_df):,})")
     _qlim(ax, np.concatenate([px0[p_idx], px0[p_idx]+pix]),
                np.concatenate([py0[p_idx], py0[p_idx]+pix]), pix)
     ax.set(xlabel=f"Easting ({crs_utm})", ylabel="Northing",
-           title=f"B — PA grid UTM\n{pix:.0f}×{pix:.0f} m celle reali")
+           title=f"B — Griglia PA UTM\n{pix:.0f}×{pix:.0f} m celle reali")
     ax.set_aspect("equal")
 
-    # Panel C — Donor grid UTM extent completo
+    # Panel C — Griglia donor UTM extent completo
     ax = axes[2]
     _boxes(ax, dx0[d_idx], dy0[d_idx], pix, "#5b9bd5", "navy", 0.55, 0.10,
            f"Donor ({len(d_idx):,}/{len(donor_df):,})")
     _qlim(ax, np.concatenate([dx0[d_idx], dx0[d_idx]+pix]),
                np.concatenate([dy0[d_idx], dy0[d_idx]+pix]), pix)
     ax.set(xlabel=f"Easting ({crs_utm})", ylabel="Northing",
-           title=f"C — Donor grid UTM (dopo filtri)\nextent completo donor")
+           title=f"C — Griglia donor UTM (dopo filtri)\nextent completo donor")
     ax.set_aspect("equal")
 
     # Panel D — Zoom zona densa PA + donor
@@ -821,8 +821,8 @@ def plot_aligned_pixel_grids(proj_df, donor_df, meta, out_dir=None):
              f"PA totali  : {len(proj_df):,} px\n"
              f"Donor tot  : {len(donor_df):,} px\n"
              f"CRS        : {crs_utm}\n"
-             f"Pixel size : {pix:.0f} m\n"
-             f"FNF filter : {'ON' if FNF_SHAPEFILE else 'OFF'}\n"
+             f"Dim. pixel : {pix:.0f} m\n"
+             f"FNF filtro : {'ON' if FNF_SHAPEFILE else 'OFF'}\n"
              f"Eligible   : {'ON' if ELIGIBLE_SHAPEFILE else 'OFF'}",
              transform=ax2.transAxes, fontsize=9, va="top",
              bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.85))
@@ -835,11 +835,11 @@ def plot_aligned_pixel_grids(proj_df, donor_df, meta, out_dir=None):
     _purge(fig2, px, py, px0, py0, pz2, pz2y, mp2, mp, close_figs=True,
            label="fig2 chiusa + array PA liberati")
 
-    print(f"    TOTAL plotting: {time.time()-t_total:.2f}s")
+    print(f"    TOTALE plotting: {time.time()-t_total:.2f}s")
     return None, None
 
 
-# ── PLOT COVARIATE ────────────────────────────────────────────────────
+# ── GRAFICO COVARIATE ─────────────────────────────────────────────────
 
 def plot_covariate_distributions(proj_df, donor_df, cont_covs, out_dir=None):
     n, ncols = len(cont_covs), 4
@@ -857,14 +857,14 @@ def plot_covariate_distributions(proj_df, donor_df, cont_covs, out_dir=None):
         ax.hist(dv, bins=bins, alpha=0.5, color="steelblue", density=True,
                 label=f"Donor ({len(dv):,})")
         ax.hist(pv, bins=bins, alpha=0.7, color="tomato",    density=True,
-                label=f"Project ({len(pv):,})")
+                label=f"Progetto ({len(pv):,})")
         ax.axvline(pv.median(), color="darkred", lw=1.5, ls="--", alpha=0.7)
         ax.axvline(dv.median(), color="navy",    lw=1.5, ls="--", alpha=0.7)
         ax.set_title(cov, fontsize=9, fontweight="bold")
         ax.legend(fontsize=7); ax.grid(alpha=0.3); ax.tick_params(labelsize=7)
     for j in range(len(cont_covs), len(axes)):
         axes[j].axis("off")
-    plt.suptitle(f"Distribuzioni covariate — Project vs Donor\n{RUN_ID}", fontsize=11)
+    plt.suptitle(f"Distribuzioni covariate — Progetto vs Donor\n{RUN_ID}", fontsize=11)
     plt.tight_layout()
     if out_dir:
         fig.savefig(Path(out_dir)/"covariate_distributions.png", dpi=150, bbox_inches="tight")
@@ -876,7 +876,7 @@ def plot_ndvi_valid_years(proj_df, donor_df, out_dir=None):
         return None
     fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
     for ax, df, label, color in [
-        (axes[0], proj_df, "Project", "tomato"),
+        (axes[0], proj_df, "Progetto", "tomato"),
         (axes[1], donor_df, "Donor",  "steelblue"),
     ]:
         cnt  = df["ndvi_valid_years"].value_counts().sort_index()
@@ -905,7 +905,7 @@ def run_extraction(base_dirs=None, output_dir=None, verbose=True,
     """
     Restituisce (proj_df, donor_df, meta, out_dir).
 
-    Parameters
+    Parametri
     ----------
     donor_extent_km : float | "full"
         Estensione del pool donor attorno al bordo della PA.
@@ -915,13 +915,13 @@ def run_extraction(base_dirs=None, output_dir=None, verbose=True,
         oltre il buffer viene mai caricato.
 
     Pipeline:
-      1. Carica TIF progetto + donor da Drive (block-by-block, evita OOM)
-      2. Applica edge exclusion e sample spaziale alla PA
+      1. Carica TIF progetto + donor da Drive (blocco per blocco, evita OOM)
+      2. Applica esclusione bordo e campione spaziale alla PA
       3. [NEW] Calcola clip window donor = bbox(PA) + buffer(donor_extent_km)
       4. Carica TIF donor SOLO nella finestra clippata
-      5. Applica FNF18 + Eligible_FNF shapefile filters (su griglia clippata)
+      5. Applica filtri shapefile FNF18 + Eligible_FNF (su griglia clippata)
       6. Salva parquet + report JSON (in directory isolata per extent)
-      7. Plot griglie pixel UTM
+      7. Grafico griglie pixel UTM
     """
     # ── Risoluzione parametri (parametro > globale modulo) ────────────
     _run_id_base     = run_id_base     if run_id_base     is not None else RUN_ID_BASE
@@ -961,7 +961,7 @@ def run_extraction(base_dirs=None, output_dir=None, verbose=True,
     if verbose:
         print(f"\n{'='*65}")
         print(f"STEP 01 | {effective_run_id}")
-        print(f"Donor extent       : {extent_label}")
+        print(f"Extent donor       : {extent_label}")
         print(f"FNF shapefile      : {Path(_fnf_shapefile).name if _fnf_shapefile else 'OFF'}")
         print(f"Eligible shapefile : {Path(_eligible_shp).name if _eligible_shp else 'OFF'}")
         print(f"Output: {out_dir}")
@@ -970,23 +970,23 @@ def run_extraction(base_dirs=None, output_dir=None, verbose=True,
     shp_audit = {}
 
     print("\n[1] Ricerca tiles...")
-    proj_tiles  = find_tif_tiles(base_dirs, _proj_pattern, "Project")
+    proj_tiles  = find_tif_tiles(base_dirs, _proj_pattern, "Progetto")
     donor_tiles = find_tif_tiles(base_dirs, _donor_pattern, "Donor")
 
-    # ── ESTRAZIONE PROJECT ────────────────────────────────────────────
-    print("\n[2] Estrazione PROJECT...")
+    # ── ESTRAZIONE PROGETTO ────────────────────────────────────────────
+    print("\n[2] Estrazione PROGETTO...")
     _purge(label="[START] RAM prima project")
     (proj_df, band_names, ndvi_year_cols, year_list,
      t0_year, cont_covs, crs_src, pixel_size, proj_transform) = \
-        load_raster_to_dataframe(proj_tiles, "Project")
+        load_raster_to_dataframe(proj_tiles, "Progetto")
 
-    print("\n[2b] Filtri PA (edge + sample)...")
+    print("\n[2b] Filtri PA (bordo + campione)...")
     n_pa_raw = len(proj_df)
     proj_df, n_edge = exclude_edge_pixels(proj_df, pixel_size)
     proj_df, sampled = spatially_stratified_sample(proj_df)
-    _purge(label=f"filtri PA edge/sample ({n_pa_raw:,}->{len(proj_df):,})")
+    _purge(label=f"filtri PA bordo/campione ({n_pa_raw:,}->{len(proj_df):,})")
 
-    # ── FILTRO SHAPEFILE PA (FNF18 only) ─────────────────────────────
+    # ── FILTRO SHAPEFILE PA (solo FNF18) ─────────────────────────────
     if proj_tiles and (_fnf_shapefile is not None):
         print("\n[2c] Filtro shapefile PA (FNF18 — rimuove pixel foresta a T0)...")
         n_before = len(proj_df)
@@ -998,14 +998,14 @@ def run_extraction(base_dirs=None, output_dir=None, verbose=True,
             clip_window=None,   # PA: sempre full (nessun clip)
             clip_transform=None,
             fnf_shapefile=_fnf_shapefile,
-            eligible_shapefile=None,  # FNF only per PA
+            eligible_shapefile=None,  # solo FNF per PA
         )
-        _purge(label=f"FNF PA filter ({n_before:,}->{len(proj_df):,})")
+        _purge(label=f"filtro FNF PA ({n_before:,}->{len(proj_df):,})")
 
-    # ── CLIP WINDOW DONOR ─────────────────────────────────────────────
+    # ── FINESTRA CLIP DONOR ───────────────────────────────────────────
     # Calcolata DOPO proj_df (bbox reale PA) e PRIMA di caricare il donor.
     # Il clip è a livello I/O: nessun byte fuori dal buffer viene letto.
-    print(f"\n[2d] Clip window donor (extent={extent_label})...")
+    print(f"\n[2d] Finestra clip donor (extent={extent_label})...")
     donor_clip_win, donor_clip_tr = None, None
     if donor_tiles:
         donor_clip_win, donor_clip_tr = compute_donor_clip_window(
@@ -1034,9 +1034,9 @@ def run_extraction(base_dirs=None, output_dir=None, verbose=True,
             fnf_shapefile=_fnf_shapefile,
             eligible_shapefile=_eligible_shp,
         )
-        _purge(label=f"SHP donor filter ({n_before:,}->{len(donor_df):,})")
+        _purge(label=f"filtro SHP donor ({n_before:,}->{len(donor_df):,})")
 
-    # ── METADATA ─────────────────────────────────────────────────────
+    # ── METADATI ──────────────────────────────────────────────────────
     tr_dict = None
     if proj_transform is not None:
         tr_dict = {k: getattr(proj_transform, k)
@@ -1065,7 +1065,7 @@ def run_extraction(base_dirs=None, output_dir=None, verbose=True,
     p2 = save_df(donor_df, out_dir / f"donor_pixels_raw.{OUTPUT_FORMAT}")
     _purge(label="dopo salvataggio parquet")
 
-    # ── 3× guideline (A2 fix) ─────────────────────────────────────────
+    # ── Linea guida 3× (A2 fix) ───────────────────────────────────────
     # La linea guida 3× confronta l'AREA donor ELEGGIBILE con l'AREA PA piena,
     # NON il conteggio di pixel donor grezzi vs PA sottocampionata.
     # project_n qui è già post edge-exclusion e post spatial-sample (150k cap),
@@ -1139,29 +1139,29 @@ def run_extraction(base_dirs=None, output_dir=None, verbose=True,
     with open(out_dir / "extraction_report.json", "w") as f:
         json.dump(report, f, indent=2)
 
-    print("\n[5] Plot griglie pixel...")
+    print("\n[5] Grafico griglie pixel...")
     grid_figs = plot_aligned_pixel_grids(proj_df, donor_df, meta, out_dir=out_dir)
     _purge(label="dopo plot (figure chiuse)")
 
     if verbose:
         print(f"\n{'='*65}")
         print(f"  Run ID           : {effective_run_id}")
-        print(f"  Donor extent     : {extent_label}")
-        print(f"  Project          : {len(proj_df):,} pixel  -> {p1.name}")
+        print(f"  Extent donor     : {extent_label}")
+        print(f"  Progetto         : {len(proj_df):,} pixel  -> {p1.name}")
         print(f"  Donor            : {len(donor_df):,} pixel  -> {p2.name}")
         _r_area = report.get("ratio_donor_project_area")
         _m_area = report.get("meets_3x_guideline_area")
         if _r_area is not None:
-            print(f"  Ratio AREA d/p   : {_r_area:.1f}×  "
+            print(f"  Rapporto AREA d/p: {_r_area:.1f}×  "
                   f"({'✓ ≥3×' if _m_area else '✗ <3×'})  [test compliance]")
-        print(f"  Ratio count proxy: {report['ratio_donor_project_count_proxy']:.1f}×  "
+        print(f"  Rapporto conteggi: {report['ratio_donor_project_count_proxy']:.1f}×  "
               f"(diagnostico — PA sottocampionata)")
         print(f"  T0 (auto)        : {t0_year}")
         print(f"  NDVI anni (auto) : {year_list}")
         print(f"  Covariate (auto) : {cont_covs}")
         print(f"  CRS              : {crs_src} | pixel {pixel_size:.0f} m")
-        print(f"  FNF filter       : {'ON: ' + Path(_fnf_shapefile).name if _fnf_shapefile else 'OFF'}")
-        print(f"  Eligible filter  : {'ON: ' + Path(_eligible_shp).name if _eligible_shp else 'OFF'}")
+        print(f"  Filtro FNF       : {'ON: ' + Path(_fnf_shapefile).name if _fnf_shapefile else 'OFF'}")
+        print(f"  Filtro Eligible  : {'ON: ' + Path(_eligible_shp).name if _eligible_shp else 'OFF'}")
         print(f"  Output           : {out_dir}")
         print(f"{'='*65}")
 

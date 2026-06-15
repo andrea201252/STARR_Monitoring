@@ -2,19 +2,19 @@
 """
 ============================================================
 GS STARR – Track 1 SEMDB | 04_STARR_reference_area_lock.py
-STEP 04 — Pixel/Block-Support Reference Area + Lock
+STEP 04 — Reference Area su supporto Pixel/Block + Lock
 ============================================================
 
-Main changes vs previous version:
-  - The final RA is not a smoothed hull by default.
-  - Matched donor pixels are converted into 30 m square support cells.
-  - Output can remain MultiPolygon. This is intentional and more defensible than
-    a large simplified envelope that includes many unvalidated donor pixels.
-  - Optional block mode can aggregate matched pixels into larger regular blocks.
-  - Monitoring points default to matched donor pixel centres. A 500 m grid over
-    disconnected 30 m cells is usually not useful.
+Principali modifiche rispetto alla versione precedente:
+  - La RA finale non è un inviluppo smussato di default.
+  - I donor pixel matchati vengono convertiti in celle di supporto quadrate da 30 m.
+  - L'output può rimanere MultiPolygon. Questo è intenzionale e più difendibile di
+    un grande inviluppo semplificato che include molti donor pixel non validati.
+  - La modalità block opzionale può aggregare i pixel matchati in block regolari più grandi.
+  - I punti di monitoraggio usano di default i centri dei donor pixel matchati. Una griglia
+    da 500 m su celle da 30 m disconnesse di solito non è utile.
 
-Default output:
+Output di default:
   reference_area_FINAL.gpkg/shp/geojson
   matched_donor_pixels.gpkg
   reference_area_support_cells.gpkg
@@ -59,30 +59,30 @@ if not _is_notebook():
 
 
 # ================================================================
-# USER PARAMETERS
+# PARAMETRI UTENTE
 # ================================================================
 
-# "pixel" = each matched donor pixel becomes a 30 m support cell.
-# "block" = matched donor pixels are snapped to regular BLOCK_SIZE_M cells.
+# "pixel" = ogni donor pixel matchato diventa una cella di supporto da 30 m.
+# "block" = i donor pixel matchati vengono agganciati a celle regolari BLOCK_SIZE_M.
 RA_SUPPORT_MODE = "pixel"
 PIXEL_SIZE_M = 30.0
 BLOCK_SIZE_M = 150.0
 
-# Keep these at 0 for final compliance. Increase only if you explicitly want
-# a cartographic generalisation and then revalidate all pixels inside the RA.
+# Mantenere questi a 0 per la conformità finale. Aumentare solo se si desidera
+# esplicitamente una generalizzazione cartografica e quindi rivalidare tutti i pixel dentro la RA.
 EDGE_BUFFER_M = 0.0
 CLOSE_GAPS_M = 0.0
 SIMPLIFY_TOL_M = 0.0
 MIN_POLYGON_HA = 0.0
 
-# "matched_pixels" is robust for disconnected pixel/block support.
-# "grid" creates a systematic grid inside the RA and may return zero points if
-# the RA is a set of disconnected 30 m cells.
+# "matched_pixels" è robusto per supporto pixel/block disconnesso.
+# "grid" crea una griglia sistematica dentro la RA e può restituire zero punti se
+# la RA è un insieme di celle da 30 m disconnesse.
 MONITORING_MODE = "matched_pixels"
 MONITORING_SPACING_M = 500.0
 MONITORING_SEED = 42
 
-# Extra vector exports. The canonical audit format is GPKG; SHP is added for GIS interoperability.
+# Export vettoriali extra. Il formato di audit canonico è GPKG; lo SHP è aggiunto per interoperabilità GIS.
 EXPORT_SUPPORT_CELLS_SHP = True
 EXPORT_MATCHED_POINTS_SHP = True
 EXPORT_MONITORING_POINTS_SHP = True
@@ -93,7 +93,7 @@ CRS_GEO = "EPSG:4326"
 
 
 # ================================================================
-# IO HELPERS
+# FUNZIONI IO
 # ================================================================
 
 def sha256_file(path):
@@ -198,7 +198,7 @@ def detect_cont_covs(meta, df):
 
 
 # ================================================================
-# GEODATAFRAME / SUPPORT CELLS
+# GEODATAFRAME / CELLE DI SUPPORTO
 # ================================================================
 
 def make_points_gdf(df):
@@ -245,8 +245,8 @@ def build_support_cells(points_gdf, mode=RA_SUPPORT_MODE):
     if mode not in {"pixel", "block"}:
         raise ValueError("RA_SUPPORT_MODE deve essere 'pixel' o 'block'.")
 
-    # Preferred audit mode: use native raster cell bounds propagated from Step 01 → Step 02 → Step 03.
-    # This avoids rebuilding a 30 m square from a reprojected lon/lat point.
+    # Modalità di audit preferita: usa i bounds nativi della cella raster propagati da Step 01 → Step 02 → Step 03.
+    # Questo evita di ricostruire un quadrato da 30 m a partire da un punto lon/lat riproiettato.
     if mode == "pixel" and _has_native_ref_bounds(points_gdf):
         geoms = []
         attrs = []
@@ -316,7 +316,7 @@ def build_reference_area(points_gdf, support_gdf, meta=None):
     if geom is None or geom.is_empty:
         raise RuntimeError("Reference Area vuota dopo post-processing.")
 
-    # Optional polygon size filter. Default is 0, meaning keep all valid matched supports.
+    # Filtro opzionale sulla dimensione dei poligoni. Il default è 0, ovvero mantenere tutti i support matchati validi.
     if MIN_POLYGON_HA > 0 and geom.geom_type == "MultiPolygon":
         polys = [p for p in geom.geoms if p.area / 10000.0 >= MIN_POLYGON_HA]
         if not polys:
@@ -358,15 +358,15 @@ def build_reference_area(points_gdf, support_gdf, meta=None):
         "lock_status": ["LOCKED"],
         "validity_years": [10],
         "description": [
-            "GS STARR locked Reference Area built from matched donor pixel/block support. "
-            "The boundary remains fixed during the 10-year baseline validity period."
+            "Reference Area bloccata GS STARR costruita dal supporto pixel/block dei donor matchati. "
+            "Il confine rimane fisso durante il periodo di validità decennale della baseline."
         ],
     }, geometry=[geom], crs=points_gdf.crs)
     return out, bounds_method, area_ha, n_in, pct_in
 
 
 # ================================================================
-# MONITORING POINTS
+# PUNTI DI MONITORAGGIO
 # ================================================================
 
 def monitoring_points(bounds_gdf, points_gdf, meta=None):
@@ -382,7 +382,7 @@ def monitoring_points(bounds_gdf, points_gdf, meta=None):
         gdf["run_id"] = run_id
         gdf["method"] = "matched_pixel_centres"
         gdf["fixed"] = True
-        gdf["description"] = "Fixed matched donor pixel centre used as monitoring support point."
+        gdf["description"] = "Centro fisso del donor pixel matchato usato come punto di supporto per il monitoraggio."
         gdf = gdf.to_crs(CRS_GEO)
         gdf["lon"] = gdf.geometry.x
         gdf["lat"] = gdf.geometry.y
@@ -400,7 +400,7 @@ def monitoring_points(bounds_gdf, points_gdf, meta=None):
                 pts.append(p)
 
     if not pts:
-        print("    WARNING: grid monitoring returned zero points; fallback to matched pixel centres.")
+        print("    ATTENZIONE: il monitoraggio a griglia ha restituito zero punti; fallback ai centri dei pixel matchati.")
         gdf = points_gdf.copy()
         gdf = gdf[["geometry"]].copy()
         gdf["point_id"] = np.arange(1, len(gdf) + 1)
@@ -408,7 +408,7 @@ def monitoring_points(bounds_gdf, points_gdf, meta=None):
         gdf["run_id"] = run_id
         gdf["method"] = "matched_pixel_centres_fallback"
         gdf["fixed"] = True
-        gdf["description"] = "Fallback fixed matched donor pixel centre used as monitoring support point."
+        gdf["description"] = "Centro fisso di fallback del donor pixel matchato usato come punto di supporto per il monitoraggio."
         gdf = gdf.to_crs(CRS_GEO)
         gdf["lon"] = gdf.geometry.x
         gdf["lat"] = gdf.geometry.y
@@ -421,7 +421,7 @@ def monitoring_points(bounds_gdf, points_gdf, meta=None):
         "method": f"grid_{MONITORING_SPACING_M:g}m",
         "spacing_m": MONITORING_SPACING_M,
         "fixed": True,
-        "description": "Fixed systematic monitoring point. Coordinates locked at Year 0.",
+        "description": "Punto di monitoraggio sistematico fisso. Coordinate bloccate all'Anno 0.",
     }, geometry=pts, crs=bounds_gdf.crs).to_crs(CRS_GEO)
     gdf["lon"] = gdf.geometry.x
     gdf["lat"] = gdf.geometry.y
@@ -429,7 +429,7 @@ def monitoring_points(bounds_gdf, points_gdf, meta=None):
 
 
 # ================================================================
-# SUMMARIES / DIAGNOSTICS
+# RIEPILOGHI / DIAGNOSTICA
 # ================================================================
 
 def cov_summary(df, cont_covs):
@@ -456,20 +456,20 @@ def diagnostics_plot(points_gdf, support_gdf, bounds_gdf, mon_gdf, out_dir=None)
     fig, axes = plt.subplots(1, 3, figsize=(21, 7))
     ax = axes[0]
     points_gdf.plot(ax=ax, markersize=1.2, alpha=0.65)
-    ax.set_title(f"1. Twin-tested matched donor pixels\n{len(points_gdf):,} unique centres")
+    ax.set_title(f"1. Donor pixel matchati e twin-tested\n{len(points_gdf):,} centri unici")
     ax.set_aspect("equal", adjustable="datalim"); ax.grid(alpha=0.3)
 
     ax = axes[1]
     support_gdf.plot(ax=ax, alpha=0.25, edgecolor="black", linewidth=0.1)
     points_gdf.plot(ax=ax, markersize=0.5, alpha=0.5)
-    ax.set_title(f"2. RA support cells\n{len(support_gdf):,} cells/blocks | {support_gdf.geometry.area.sum()/10000:,.2f} ha")
+    ax.set_title(f"2. Celle di supporto RA\n{len(support_gdf):,} celle/block | {support_gdf.geometry.area.sum()/10000:,.2f} ha")
     ax.set_aspect("equal", adjustable="datalim"); ax.grid(alpha=0.3)
 
     ax = axes[2]
     bounds_gdf.plot(ax=ax, alpha=0.25, edgecolor="darkgreen", linewidth=1.0)
     if gdf_is_nonempty(mon_gdf):
         mon_gdf.to_crs(bounds_gdf.crs).plot(ax=ax, markersize=1.2, alpha=0.6)
-    ax.set_title(f"3. Final locked RA\n{bounds_gdf.total_ha.iloc[0]:,.2f} ha | monitoring={gdf_nrows(mon_gdf):,}")
+    ax.set_title(f"3. RA finale bloccata\n{bounds_gdf.total_ha.iloc[0]:,.2f} ha | monitoraggio={gdf_nrows(mon_gdf):,}")
     ax.set_aspect("equal", adjustable="datalim"); ax.grid(alpha=0.3)
     plt.tight_layout()
     if out_dir:
@@ -480,7 +480,7 @@ def diagnostics_plot(points_gdf, support_gdf, bounds_gdf, mon_gdf, out_dir=None)
 
 
 def build_native_matched_cells(points_gdf):
-    """Return matched reference cells as native raster footprints when available."""
+    """Restituisce le celle reference matchate come footprint raster nativi quando disponibili."""
     if not _has_native_ref_bounds(points_gdf):
         return None
     geoms = []
@@ -576,11 +576,11 @@ def export_and_lock(bounds_gdf, support_gdf, mon_gdf, points_gdf, df_u, twin_rep
 
     safe_proj_name = str(proj_name).replace(" ", "_").replace("-", "_")
     gee_js = (
-        f"// GS STARR Locked Reference Area - {proj_name}\n"
+        f"// Reference Area bloccata GS STARR - {proj_name}\n"
         f"// RUN_ID: {run_id}\n"
         f"// Area: {area_ha:,.4f} ha\n"
-        f"// Bounds method: {bounds_method}\n"
-        f"// Upload reference_area_FINAL.gpkg/geojson as a GEE asset, then replace the asset path below.\n\n"
+        f"// Metodo bounds: {bounds_method}\n"
+        f"// Caricare reference_area_FINAL.gpkg/geojson come asset GEE, poi sostituire il path dell'asset qui sotto.\n\n"
         f"var refArea = ee.FeatureCollection(\"users/YOUR_USER/{safe_proj_name}_reference_area_FINAL\");\n"
         f"print(\"Reference Area ha\", refArea.geometry().area().divide(10000));\n"
         f"Map.addLayer(refArea, {{color: \"orange\"}}, \"GS STARR Locked Reference Area\", true);\n"
@@ -602,7 +602,7 @@ def export_and_lock(bounds_gdf, support_gdf, mon_gdf, points_gdf, df_u, twin_rep
         "pipeline_version": "v07_native_pixel_support_with_vector_exports",
         "donor_pool_rule": "Non-Forest at Year 0 and >5 km from Activity Boundary",
         "reference_area_definition": {
-            "description": "Locked RA built from matched donor native raster pixel/block support, not from a smoothed global hull.",
+            "description": "RA bloccata costruita dal supporto pixel/block raster nativo dei donor matchati, non da un inviluppo globale smussato.",
             "support_mode": RA_SUPPORT_MODE,
             "pixel_size_m": PIXEL_SIZE_M,
             "block_size_m": BLOCK_SIZE_M,
@@ -630,7 +630,7 @@ def export_and_lock(bounds_gdf, support_gdf, mon_gdf, points_gdf, df_u, twin_rep
             "mode": MONITORING_MODE,
             "spacing_m": MONITORING_SPACING_M,
             "n_points": gdf_nrows(mon_gdf),
-            "description": "Fixed monitoring support points. Default is matched donor pixel centres.",
+            "description": "Punti di supporto fissi per il monitoraggio. Il default sono i centri dei donor pixel matchati.",
         },
         "twin_test_summary": twin_report or {},
         "twin_test_compliant": twin_report.get("twin_test_compliant", None) if twin_report else None,
@@ -647,12 +647,12 @@ def export_and_lock(bounds_gdf, support_gdf, mon_gdf, points_gdf, df_u, twin_rep
 
 
 # ================================================================
-# MAIN STEP
+# STEP PRINCIPALE
 # ================================================================
 
 def run_reference_area_lock(base_dirs=None, output_dir=None, passed_df=None, meta=None,
                             twin_report=None, allow_noncompliant_twin=False, verbose=True):
-    """Returns: bounds_gdf, mon_gdf, fig_diag, out_dir, manifest
+    """Restituisce: bounds_gdf, mon_gdf, fig_diag, out_dir, manifest
 
     allow_noncompliant_twin : se False (default) e il twin test NON è conforme
         (twin_test_compliant=False nel report Step 03), Step 04 si ferma.
@@ -703,10 +703,10 @@ def run_reference_area_lock(base_dirs=None, output_dir=None, passed_df=None, met
 
     if verbose:
         print(f"\n{'=' * 60}")
-        print("STEP 04 - Pixel/Block Support Reference Area Lock")
-        print(f"Support mode : {RA_SUPPORT_MODE}")
-        print(f"Monitoring   : {MONITORING_MODE}")
-        print(f"Output       : {out_dir}")
+        print("STEP 04 - Lock Reference Area su supporto Pixel/Block")
+        print(f"Modalità supporto : {RA_SUPPORT_MODE}")
+        print(f"Monitoraggio      : {MONITORING_MODE}")
+        print(f"Output            : {out_dir}")
         print(f"{'=' * 60}")
 
     if len(passed_df) == 0:
@@ -714,25 +714,25 @@ def run_reference_area_lock(base_dirs=None, output_dir=None, passed_df=None, met
 
     print(f"    Pixel accettati dal twin test: {len(passed_df):,}")
 
-    print("\n[1] Reference points")
+    print("\n[1] Punti reference")
     points_gdf, df_u, crs_m, lon_col, lat_col = make_points_gdf(passed_df)
     print(f"    Coordinate usate: {lon_col}, {lat_col}")
     print(f"    CRS metrico     : {crs_m}")
     print(f"    Pixel unici     : {len(points_gdf):,}")
 
-    print("\n[2] Build support cells")
+    print("\n[2] Costruzione celle di supporto")
     support_gdf = build_support_cells(points_gdf, RA_SUPPORT_MODE)
-    print(f"    Support features: {len(support_gdf):,}")
-    print(f"    Support area    : {support_gdf.geometry.area.sum()/10000:,.4f} ha")
+    print(f"    Feature di supporto: {len(support_gdf):,}")
+    print(f"    Area di supporto   : {support_gdf.geometry.area.sum()/10000:,.4f} ha")
 
-    print("\n[3] Build locked RA")
+    print("\n[3] Costruzione RA bloccata")
     bounds_gdf, bounds_method, area_ha, n_in, pct_in = build_reference_area(points_gdf, support_gdf, meta)
     print(f"    Reference Area: {area_ha:,.4f} ha | {bounds_method}")
-    print(f"    Matched points inside: {n_in:,}/{len(points_gdf):,} ({pct_in:.1f}%)")
+    print(f"    Punti matchati interni: {n_in:,}/{len(points_gdf):,} ({pct_in:.1f}%)")
 
-    print("\n[4] Monitoring points")
+    print("\n[4] Punti di monitoraggio")
     mon_gdf = monitoring_points(bounds_gdf, points_gdf, meta)
-    print(f"    Monitoring points: {gdf_nrows(mon_gdf):,}")
+    print(f"    Punti di monitoraggio: {gdf_nrows(mon_gdf):,}")
 
     print("\n[5] Export + Lock")
     paths, manifest, fig_diag = export_and_lock(
@@ -753,11 +753,11 @@ def run_reference_area_lock(base_dirs=None, output_dir=None, passed_df=None, met
 
     if verbose:
         print(f"\n{'=' * 60}")
-        print("REFERENCE AREA LOCKED")
-        print(f"Area       : {area_ha:,.4f} ha")
-        print(f"Method     : {bounds_method}")
-        print(f"Monitoring : {gdf_nrows(mon_gdf):,} points")
-        print(f"Output     : {out_dir}")
+        print("REFERENCE AREA BLOCCATA")
+        print(f"Area         : {area_ha:,.4f} ha")
+        print(f"Metodo       : {bounds_method}")
+        print(f"Monitoraggio : {gdf_nrows(mon_gdf):,} punti")
+        print(f"Output       : {out_dir}")
         print(f"{'=' * 60}")
 
     return bounds_gdf, mon_gdf, fig_diag, out_dir, manifest

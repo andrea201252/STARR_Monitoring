@@ -1,18 +1,18 @@
 # -*- coding: utf-8 -*-
 """
 GS STARR – Track 1 SEMDB | 03_STARR_twin_test_selection.py
-STEP 03 — Aggregate Parallel Trend / Twin Test
-[v2 — vectorised OLS + fast make_long + single long_df build in iterative loop]
+STEP 03 — Test Aggregato Trend Parallelo / Twin Test
+[v2 — OLS vettorizzato + make_long veloce + singola costruzione long_df nel loop iterativo]
 
-Changes vs v1
-─────────────
-PERF 1  _ols_vectorized: replaced Python per-pixel loop with full numpy
-         broadcast; handles per-row NaN masks via masked summation.
-         100-1000× faster for large pair sets.
-PERF 2  make_long_for_interaction: replaced Python loop + 20× pd.concat with
-         numpy np.repeat/np.tile and a single DataFrame constructor.
-PERF 3  select_pairs_with_parallel_trend: builds valid_long_df once;
-         iterative fraction loop filters with np.isin instead of rebuilding.
+Modifiche rispetto a v1
+───────────────────────
+PERF 1  _ols_vectorized: sostituito il loop Python per-pixel con un broadcast
+         numpy completo; gestisce le maschere NaN per-riga tramite somma mascherata.
+         100-1000× più veloce per grandi set di coppie.
+PERF 2  make_long_for_interaction: sostituito il loop Python + 20× pd.concat con
+         numpy np.repeat/np.tile e un singolo costruttore DataFrame.
+PERF 3  select_pairs_with_parallel_trend: costruisce valid_long_df una sola volta;
+         il loop iterativo sulla frazione filtra con np.isin invece di ricostruire.
 """
 
 import warnings
@@ -44,7 +44,7 @@ if not _is_notebook():
 
 
 # ================================================================
-# PARAMETERS
+# PARAMETRI
 # ================================================================
 
 PVALUE_THRESHOLD      = 0.05
@@ -56,7 +56,7 @@ GRID_SEED             = 42
 
 
 # ================================================================
-# IO HELPERS
+# FUNZIONI IO
 # ================================================================
 
 def load_df(path):
@@ -81,21 +81,21 @@ def years_from_cols(ndvi_year_cols):
 
 
 # ================================================================
-# OLS — fully vectorised (PERF 1)
+# OLS — completamente vettorizzato (PERF 1)
 # ================================================================
 
 def _ols_vectorized(Y, years, min_valid):
     """
-    Vectorised OLS: slope, p-value, valid_count for each row of Y.
-    No Python per-row loop. Handles per-row NaN via masked summation.
+    OLS vettorizzato: slope, p-value, valid_count per ogni riga di Y.
+    Nessun loop Python per-riga. Gestisce i NaN per-riga tramite somma mascherata.
 
-    Parameters
+    Parametri
     ----------
     Y         : (n_pixels, n_years) array-like
     years     : (n_years,)
     min_valid : int
 
-    Returns (slopes, pvalues, valid_cnt) — each (n_pixels,) ndarray
+    Restituisce (slopes, pvalues, valid_cnt) — ciascuno ndarray (n_pixels,)
     """
     years = np.asarray(years, dtype=np.float64)
     Y     = np.asarray(Y,     dtype=np.float64)
@@ -105,7 +105,7 @@ def _ols_vectorized(Y, years, min_valid):
     valid_cnt = finite.sum(axis=1)          # (n_px,)
     ok_px     = valid_cnt >= int(min_valid)
 
-    # Zero-out invalid positions for safe vectorised sums
+    # Azzera le posizioni non valide per somme vettorizzate sicure
     Y_s  = np.where(finite, Y,                  0.0)
     yr_s = np.where(finite, years[np.newaxis,:], 0.0)
 
@@ -135,7 +135,7 @@ def _ols_vectorized(Y, years, min_valid):
     se     = np.sqrt(np.maximum(se_sq, 0.0))
     t_stat = np.where(se > 1e-15, slopes/se, 0.0)
 
-    # scipy.stats.t.sf accepts arrays
+    # scipy.stats.t.sf accetta array
     pvalues = np.where(
         valid_ok,
         2.0 * stats.t.sf(np.abs(t_stat), df=np.maximum(valid_cnt-2, 1)),
@@ -146,14 +146,14 @@ def _ols_vectorized(Y, years, min_valid):
 
 
 # ================================================================
-# LONG FORMAT — numpy reshape (PERF 2)
+# FORMATO LONG — reshape numpy (PERF 2)
 # ================================================================
 
 def make_long_for_interaction(df, ndvi_year_cols):
     """
-    Builds [pair_id, year, group, ndvi] long DataFrame.
+    Costruisce il DataFrame long [pair_id, year, group, ndvi].
     group=1 project, group=0 reference.
-    No Python loop; no pd.concat; single DataFrame constructor from numpy.
+    Nessun loop Python; nessun pd.concat; singolo costruttore DataFrame da numpy.
     """
     if df.empty or not ndvi_year_cols:
         return pd.DataFrame(columns=["pair_id","year","group","ndvi"])
@@ -183,7 +183,7 @@ def make_long_for_interaction(df, ndvi_year_cols):
 
 
 # ================================================================
-# INTERACTION + PAIRED SLOPE TESTS
+# TEST DI INTERAZIONE + PENDENZA APPAIATA
 # ================================================================
 
 def interaction_test_from_long(long_df):
@@ -225,7 +225,7 @@ def paired_slope_test(df):
 
 
 # ================================================================
-# DATA PREP
+# PREPARAZIONE DATI
 # ================================================================
 
 def attach_project_ndvi(matched_df, proj_df, ndvi_year_cols):
@@ -272,15 +272,15 @@ def compute_pair_slopes(df, ndvi_year_cols, year_list, min_valid):
 
 
 # ================================================================
-# PAIR SELECTION — long_df built once (PERF 3)
+# SELEZIONE COPPIE — long_df costruito una sola volta (PERF 3)
 # ================================================================
 
 def select_pairs_with_parallel_trend(result_df, ndvi_year_cols):
     """
-    Starts from fixed pair slope threshold; if aggregate test fails, iteratively
-    trims pairs sorted by |slope_diff|.
+    Parte dalla soglia fissa di differenza di pendenza delle coppie; se il test
+    aggregato fallisce, riduce iterativamente le coppie ordinate per |slope_diff|.
 
-    PERF 3: valid_long_df built once; np.isin used to filter in the loop.
+    PERF 3: valid_long_df costruito una sola volta; np.isin usato per filtrare nel loop.
     """
     min_n = max(MIN_SELECTED_PAIRS, int(len(result_df)*MIN_SELECTED_FRACTION))
     base  = result_df[result_df["ols_valid"] & result_df["pair_slope_ok"]].copy()
@@ -300,9 +300,9 @@ def select_pairs_with_parallel_trend(result_df, ndvi_year_cols):
                       "selected_fraction":float(len(base)/max(1,len(result_df))),
                       "interaction":it,"paired_slope":pt}
 
-    # Sort valid once; build long_df once — PERF 3
+    # Ordina i validi una volta; costruisci long_df una volta — PERF 3
     valid               = result_df[result_df["ols_valid"]].copy().sort_values("slope_diff")
-    valid_long_full     = make_long_for_interaction(valid, ndvi_year_cols)  # built once
+    valid_long_full     = make_long_for_interaction(valid, ndvi_year_cols)  # costruito una sola volta
     valid_pair_ids      = valid.index.to_numpy()
     valid_long_pair_arr = valid_long_full["pair_id"].to_numpy()
 
@@ -311,7 +311,7 @@ def select_pairs_with_parallel_trend(result_df, ndvi_year_cols):
         n = max(min_n, int(len(valid)*frac))
         if n > len(valid): continue
         sub_ids  = valid_pair_ids[:n]
-        mask_long = np.isin(valid_long_pair_arr, sub_ids)   # fast filter
+        mask_long = np.isin(valid_long_pair_arr, sub_ids)   # filtro veloce
         sub_long  = valid_long_full.iloc[mask_long]
         sub       = valid.iloc[:n]
         it, pt, passed = _eval(sub, sub_long)
@@ -338,7 +338,7 @@ def select_pairs_with_parallel_trend(result_df, ndvi_year_cols):
 
 
 # ================================================================
-# PLOTS
+# GRAFICI
 # ================================================================
 
 def plot_parallel_trends(result_df, passed_df, ndvi_year_cols, out_dir=None):
@@ -360,8 +360,8 @@ def plot_parallel_trends(result_df, passed_df, ndvi_year_cols, out_dir=None):
             d = summary[(summary["set"]==label)&(summary["group"]==group)]
             ax.errorbar(d["year"],d["mean_ndvi"],yerr=d["se"],marker=marker,
                         linestyle=ls,alpha=alpha,label=f"{group} - {label}")
-    ax.set_xlabel("Year"); ax.set_ylabel("Mean NDVI")
-    ax.set_title("Parallel trend: Project vs Reference mean NDVI")
+    ax.set_xlabel("Anno"); ax.set_ylabel("NDVI medio")
+    ax.set_title("Trend parallelo: NDVI medio Project vs Reference")
     ax.grid(alpha=0.3); ax.legend(fontsize=8); plt.tight_layout()
     if out_dir:
         fig.savefig(Path(out_dir)/"parallel_trends_mean_ndvi.png",dpi=150,bbox_inches="tight")
@@ -373,14 +373,14 @@ def plot_paired_slope_scatter(result_df, passed_df, out_dir=None):
     fig, ax = plt.subplots(figsize=(6,6))
     failed = result_df.loc[(~result_df.get("twin_pass",pd.Series(False,index=result_df.index)).astype(bool))
                             & result_df["ols_valid"]]
-    ax.scatter(failed["proj_slope"],failed["ref_slope"],s=8,alpha=0.25,label=f"Excluded ({len(failed):,})")
-    ax.scatter(passed_df["proj_slope"],passed_df["ref_slope"],s=10,alpha=0.65,label=f"Selected ({len(passed_df):,})")
+    ax.scatter(failed["proj_slope"],failed["ref_slope"],s=8,alpha=0.25,label=f"Esclusi ({len(failed):,})")
+    ax.scatter(passed_df["proj_slope"],passed_df["ref_slope"],s=10,alpha=0.65,label=f"Selezionati ({len(passed_df):,})")
     vals = pd.concat([result_df["proj_slope"],result_df["ref_slope"]]).dropna()
     lim  = max(float(vals.abs().quantile(0.99)*1.1) if len(vals) else 0, PAIR_SLOPE_DIFF_MAX*2)
     ax.plot([-lim,lim],[-lim,lim],"k--",lw=0.8,alpha=0.5,label="1:1")
     ax.set_xlim(-lim,lim); ax.set_ylim(-lim,lim)
-    ax.set_xlabel("Project NDVI slope"); ax.set_ylabel("Reference NDVI slope")
-    ax.set_title("Paired slope comparison"); ax.grid(alpha=0.3); ax.legend(fontsize=8)
+    ax.set_xlabel("Pendenza NDVI progetto"); ax.set_ylabel("Pendenza NDVI reference")
+    ax.set_title("Confronto pendenza appaiata"); ax.grid(alpha=0.3); ax.legend(fontsize=8)
     plt.tight_layout()
     if out_dir: fig.savefig(Path(out_dir)/"paired_slope_scatter.png",dpi=150,bbox_inches="tight")
     return fig
@@ -399,7 +399,7 @@ def plot_example_grid(passed_df, ndvi_year_cols, out_dir=None, n=None):
         ax = axes[i]
         p = [row.get(f"proj_{c}",np.nan) for c in ndvi_year_cols]
         r = [row.get(f"ref_{c}", np.nan) for c in ndvi_year_cols]
-        ax.plot(years,p,"o-",lw=1,markersize=4,label="Project")
+        ax.plot(years,p,"o-",lw=1,markersize=4,label="Progetto")
         ax.plot(years,r,"s--",lw=1,markersize=4,label="Reference")
         ax.set_title(f"|Δslope|={row.get('slope_diff',np.nan):.4f}",fontsize=7)
         ax.tick_params(labelsize=6); ax.grid(alpha=0.2)
@@ -444,15 +444,15 @@ def run_twin_test(base_dirs=None, output_dir=None, matched_df=None,
               f"min_valid={min_valid}/{len(year_list)}")
         print(f"Output: {out_dir}\n{'='*60}")
 
-    print("\n[1] Attach project NDVI")
+    print("\n[1] Aggancio NDVI di progetto")
     result = attach_project_ndvi(matched_df, proj_df, ndvi_year_cols)
 
-    print("[2] Pair slopes (vectorised OLS)")
+    print("[2] Pendenze delle coppie (OLS vettorizzato)")
     t0 = time.time()
     result = compute_pair_slopes(result, ndvi_year_cols, year_list, min_valid)
-    print(f"    OLS valid: {int(result['ols_valid'].sum()):,}/{len(result):,} ({time.time()-t0:.1f}s)")
+    print(f"    OLS validi: {int(result['ols_valid'].sum()):,}/{len(result):,} ({time.time()-t0:.1f}s)")
 
-    print("[3] Aggregate tests")
+    print("[3] Test aggregati")
     all_valid       = result[result["ols_valid"]]
     all_long        = make_long_for_interaction(all_valid, ndvi_year_cols)
     all_interaction = interaction_test_from_long(all_long)
@@ -481,13 +481,13 @@ def run_twin_test(base_dirs=None, output_dir=None, matched_df=None,
           f"selected={len(passed):,}/{len(result):,} | passed={aggregate_passed}")
     if not twin_test_compliant:
         print("    " + "!" * 56)
-        print("    WARNING: il twin/parallel-trend test NON è passato.")
+        print("    ATTENZIONE: il twin/parallel-trend test NON è passato.")
         print("    I pixel selezionati sono 'best available' e NON conformi.")
         print("    Step 04 si fermerà a meno che non venga forzato esplicitamente")
         print("    (allow_noncompliant_twin=True). Documentare nel PDD.")
         print("    " + "!" * 56)
 
-    print("[4] Plots + export")
+    print("[4] Grafici + export")
     fig_trend, trend_table = plot_parallel_trends(result, passed, ndvi_year_cols, out_dir)
     fig_slope = plot_paired_slope_scatter(result, passed, out_dir)
     fig_grid  = plot_example_grid(passed, ndvi_year_cols, out_dir)
@@ -500,7 +500,7 @@ def run_twin_test(base_dirs=None, output_dir=None, matched_df=None,
     report = {
         "run_id":meta.get("run_id",""),
         "timestamp_utc":datetime.now(timezone.utc).isoformat(),
-        "method":"Aggregate NDVI parallel trend interaction test + paired slope test",
+        "method":"Test aggregato di interazione su trend parallelo NDVI + test di pendenza appaiata",
         "pvalue_threshold":PVALUE_THRESHOLD,"pair_slope_diff_max":PAIR_SLOPE_DIFF_MAX,
         "ndvi_year_cols":ndvi_year_cols,"year_list":year_list,"min_valid_years":int(min_valid),
         "input_pairs":int(len(result)),"ols_valid_pairs":int(result["ols_valid"].sum()),
@@ -524,9 +524,9 @@ def run_twin_test(base_dirs=None, output_dir=None, matched_df=None,
 
     if verbose:
         print(f"\n{'='*60}")
-        print(f"Twin selected : {len(passed):,}/{len(result):,}")
-        print(f"Aggregate OK  : {aggregate_passed}")
-        print(f"Output        : {out_dir}\n{'='*60}")
+        print(f"Twin selezionati : {len(passed):,}/{len(result):,}")
+        print(f"Aggregato OK     : {aggregate_passed}")
+        print(f"Output           : {out_dir}\n{'='*60}")
 
     return result, passed, report, {"parallel_trends":fig_trend,"slope_scatter":fig_slope,
                                      "examples":fig_grid}, out_dir
