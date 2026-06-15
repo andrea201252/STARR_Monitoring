@@ -14,8 +14,8 @@ Ogni extent genera una directory output isolata (run_id include il suffisso).
   20      → buffer 20 km
   30      → buffer 30 km
 
-Step 02 is intentionally called with donor_df=None.
-Step 05 requires monitored carbon-stock change (controlled externally).
+Step 02 viene chiamato intenzionalmente con donor_df=None.
+Step 05 richiede la variazione dello stock di carbonio monitorata (controllata esternamente).
 """
 
 import gc
@@ -66,8 +66,8 @@ def main(run_step_05: bool = True,
     """
     Esegue la pipeline STARR completa con l'estensione donor scelta.
 
-    Parameters
-    ----------
+    Parametri
+    ---------
     run_step_05 : bool
         Se False, si ferma dopo Step 04 (utile per 00b_compare_extents).
     donor_extent_km : float | "full"
@@ -81,8 +81,8 @@ def main(run_step_05: bool = True,
     eligible_shapefile : str | None
         Path shapefile Eligible_FNF. None = filtro disattivato.
 
-    Returns
-    -------
+    Restituisce
+    -----------
     dict con path di output di ogni step e metadati chiave.
     """
     s01 = load_module("01_STARR_raster_extract.py",        "s01")
@@ -102,7 +102,7 @@ def main(run_step_05: bool = True,
         eligible_shapefile=eligible_shapefile,
     )
 
-    # RAM guard: Step 02 rilegge il donor da disk con sole le colonne
+    # Protezione RAM: Step 02 rilegge il donor da disk con sole le colonne
     # necessarie + cap stratificato. Non serve tenerlo in RAM.
     del donor_df
     gc.collect()
@@ -159,7 +159,7 @@ def main(run_step_05: bool = True,
 
     if not run_step_05:
         print(f"\n[STOP] Fermato dopo Step 04. "
-              f"Step 05 richiede carbon-stock change data.")
+              f"Step 05 richiede i dati di variazione dello stock di carbonio.")
         return {
             "01_extract":        out01,
             "02_matching":       out02,
@@ -170,17 +170,17 @@ def main(run_step_05: bool = True,
 
     s05 = load_module(
         "05_STARR_baseline_confidence_interval_UNCBSL.py", "s05")
-    # Step 05 returns 6 values: control_pixels, project_pixels, summary, report, figs, out_dir
+    # Step 05 restituisce 6 valori: control_pixels, project_pixels, summary, report, figs, out_dir
     control_pixels, project_pixels, ci_summary, report, fig05, out05 = \
         s05.run_baseline_ci_uncbsl()
 
-    # BL_unadj,y = ΔC_ref,y × A_project  (GS STARR Eq 31a) — absolute tCO2e, NOT fractions.
-    # Keys produced by build_unadjusted_baseline_summary (surfaced from Step 05 summary dict).
+    # BL_unadj,y = ΔC_ref,y × A_project  (GS STARR Eq 31a) — tCO2e assoluti, NON frazioni.
+    # Chiavi prodotte da build_unadjusted_baseline_summary (esposte dal dict summary di Step 05).
     summary["BL_unadj_y_tCO2e"]       = ci_summary.get("BL_unadj_y_tCO2e")
     summary["BL_unadj_period_tCO2e"]  = ci_summary.get("BL_unadj_period_tCO2e")
     summary["delta_C_ref_y_tC_ha_yr"] = ci_summary.get("delta_C_ref_y_tC_ha_yr")
     summary["project_area_ha"]        = ci_summary.get("project_area_ha_used")
-    # CI bounds (tC/ha/yr at pixel level — per-unit-area values for diagnostics)
+    # Estremi CI (tC/ha/yr a livello di pixel — valori per unità di area per la diagnostica)
     summary["ci90_lower_tC_ha_yr"]    = ci_summary.get(
         "ci90_lower_final_tC_ha_yr", ci_summary.get("ci90_lower_tC_ha_yr"))
     summary["ci90_mean_tC_ha_yr"]     = ci_summary.get("mean_deltaC_control_tC_ha_yr")

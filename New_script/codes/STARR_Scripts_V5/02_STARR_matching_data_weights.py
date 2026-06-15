@@ -13,10 +13,10 @@ PARAMETRI MANUALI:
   MAX_DONOR_REUSE
 
 NOVITÀ v04 rispetto alla versione precedente:
-  - VECTORIZED HARD CALIPERS: il check dei calipers non usa più un loop
+  - HARD CALIPER VETTORIZZATI: il check dei calipers non usa più un loop
     Python per pixel per candidato, ma pre-estrae array numpy dal donor_df
     e fa le comparazioni in numpy → 10-50x più veloce.
-  - Eliminato l'uso di pandas iloc per ogni candidato (era il bottleneck).
+  - Eliminato l'uso di pandas iloc per ogni candidato (era il collo di bottiglia).
   - Logica KNN adattata dal QGIS PlotMatcherAlgorithm: usa la stessa metrica
     Mahalanobis (VI = inv(Σ_LedoitWolf)) ma con whitening Cholesky + ball_tree
     invece di cdist brute-force, che non scala oltre 50k pixel donor.
@@ -27,8 +27,8 @@ Hard calipers (GS STARR Annex 1 Table A.3):
   elevation      ±200 m
   slope_deg      ±10°
   dist_roads_km  ±1 km
-  texture_class  exact match (WRB2 → soil texture class)
-  tenure_col     exact match se presente
+  texture_class  match esatto (WRB2 → classe di texture del suolo)
+  tenure_col     match esatto se presente
 """
 
 import warnings
@@ -100,7 +100,7 @@ CALIPER_ROADS_KM                  = 1.0
 # documentata nel PDD per uno specifico caliper assente nel dataset.
 REQUIRE_MANDATORY_CALIPERS = True
 MANDATORY_CALIPER_COLUMNS = [
-    "WRB2_CODE",      # → texture_class (exact match)
+    "WRB2_CODE",      # → texture_class (match esatto)
     "SOC_g_kg",       # ±10% media PA
     "NDVI_t0",        # ±10% media PA
     "elevation",      # ±200 m
@@ -170,7 +170,7 @@ def assign_texture(df):
     df["texture_class"] = df["WRB2_CODE"].apply(wrb_to_texture)
     before = len(df)
     df = df[df["texture_class"].notna()].reset_index(drop=True)
-    print(f"    WRB filter: {before:,} → {len(df):,} px validi")
+    print(f"    Filtro WRB: {before:,} → {len(df):,} px validi")
     if len(df) == 0:
         raise RuntimeError("Nessun pixel valido dopo filtro WRB.")
     return df
@@ -194,7 +194,7 @@ def detect_tenure_col(proj_df, donor_df):
     return None
 
 
-# ── PREFILTER (loose) ─────────────────────────────────────────────────
+# ── PREFILTRO (largo) ─────────────────────────────────────────────────
 
 def auto_prefilter_donor(proj_df, donor_df, cont_covs):
     """Filtro largo sul donor (±20% del range). I calipers esatti vengono dopo."""
@@ -211,9 +211,9 @@ def auto_prefilter_donor(proj_df, donor_df, cont_covs):
         lo, hi = q01 - buf, q99 + buf
         before = len(out)
         out = out[(out[col] >= lo) & (out[col] <= hi)]
-        print(f"    Prefilter {col:18s}: [{lo:.3f}, {hi:.3f}] {before:,} → {len(out):,}")
+        print(f"    Prefiltro {col:18s}: [{lo:.3f}, {hi:.3f}] {before:,} → {len(out):,}")
         if len(out) == 0:
-            raise RuntimeError(f"Donor vuoto dopo prefilter '{col}'.")
+            raise RuntimeError(f"Donor vuoto dopo prefiltro '{col}'.")
     return out.reset_index(drop=True)
 
 
@@ -254,7 +254,7 @@ def _gc(force=False):
 
 
 def adaptive_k(n_donor_pool, base_k=KNN_QUERY_CANDIDATES):
-    """Candidates adattativi: se il pool è piccolo, interroga tutto."""
+    """Candidati adattativi: se il pool è piccolo, interroga tutto."""
     return max(K_NEIGHBOURS, min(base_k, int(n_donor_pool * 0.95), n_donor_pool))
 
 
@@ -272,7 +272,7 @@ def _build_donor_arrays(donor_df, cont_covs, tenure_col, ctx):
     """
     Pre-estrae le colonne rilevanti dal donor_df come array numpy.
     Questo evita la chiamata a pandas iloc per ogni candidato durante
-    il check dei calipers (era il bottleneck principale).
+    il check dei calipers (era il collo di bottiglia principale).
     """
     arr = {}
     arr["texture_class"] = donor_df["texture_class"].values.astype(str)
@@ -289,34 +289,34 @@ def _build_donor_arrays(donor_df, cont_covs, tenure_col, ctx):
         else:
             arr[col] = None
 
-    # Precompute tolerance context
+    # Precalcola il contesto di tolleranza
     arr["ctx"] = ctx
     return arr
 
 
-# ── VECTORIZED CALIPER CHECK ──────────────────────────────────────────
+# ── CONTROLLO CALIPER VETTORIZZATO ────────────────────────────────────
 
 def _check_calipers_vectorized(proj_row, cand_global_idx, donor_arr, ctx, tenure_col):
     """
     Controlla i calipers su TUTTI i candidati in una sola passata numpy.
     
     Input:
-      proj_row:        Series (pandas row del pixel di progetto)
+      proj_row:        Series (riga pandas del pixel di progetto)
       cand_global_idx: array int, indici globali nel donor_df dei candidati KNN
       donor_arr:       dict di array numpy pre-estratti dal donor_df
-    
-    Returns:
-      passes: bool array di lunghezza len(cand_global_idx)
+
+    Restituisce:
+      passes: array bool di lunghezza len(cand_global_idx)
       n_rejected: int, numero di candidati rifiutati
     """
     n      = len(cand_global_idx)
     passes = np.ones(n, dtype=bool)
 
-    # 1. Texture exact
+    # 1. Texture esatta
     proj_tex = str(proj_row.get("texture_class", ""))
     passes  &= (donor_arr["texture_class"][cand_global_idx] == proj_tex)
 
-    # 2. Tenure exact (se disponibile)
+    # 2. Tenure esatta (se disponibile)
     if donor_arr["tenure"] is not None and tenure_col:
         proj_ten = str(proj_row.get(tenure_col, ""))
         passes  &= (donor_arr["tenure"][cand_global_idx] == proj_ten)
@@ -333,19 +333,19 @@ def _check_calipers_vectorized(proj_row, cand_global_idx, donor_arr, ctx, tenure
         if np.isfinite(pv):
             passes &= np.abs(donor_arr["NDVI_t0"][cand_global_idx] - pv) <= ctx["ndvi_tol"]
 
-    # 5. Elevation ±200 m
+    # 5. Elevazione ±200 m
     if donor_arr["elevation"] is not None:
         pv = float(proj_row.get("elevation", np.nan))
         if np.isfinite(pv):
             passes &= np.abs(donor_arr["elevation"][cand_global_idx] - pv) <= CALIPER_ELEVATION_M
 
-    # 6. Slope ±10°
+    # 6. Pendenza ±10°
     if donor_arr["slope_deg"] is not None:
         pv = float(proj_row.get("slope_deg", np.nan))
         if np.isfinite(pv):
             passes &= np.abs(donor_arr["slope_deg"][cand_global_idx] - pv) <= CALIPER_SLOPE_DEG
 
-    # 7. Roads ±1 km
+    # 7. Strade ±1 km
     if donor_arr["dist_roads_km"] is not None:
         pv = float(proj_row.get("dist_roads_km", np.nan))
         if np.isfinite(pv):
@@ -392,10 +392,10 @@ def validate_mandatory_calipers(proj_df, donor_df):
 
 def stratified_donor_cap(donor_df, sample_n, strat_col="texture_class", seed=42):
     """
-    B2 fix: cap donor STRATIFICATO per texture (non sample casuale).
+    B2 fix: cap donor STRATIFICATO per texture (non campione casuale).
 
     Mantiene la proporzione di ogni gruppo texture nel campione, così le texture
-    rare non vengono sottorappresentate. Se strat_col manca, ricade su sample
+    rare non vengono sottorappresentate. Se strat_col manca, ricade su campione
     casuale (con warning).
     """
     n_total = len(donor_df)
@@ -427,19 +427,19 @@ def stratified_donor_cap(donor_df, sample_n, strat_col="texture_class", seed=42)
 
 def run_matching(proj_df, donor_df, weights_dict, cont_covs, meta):
     """
-    Matching stratificato per texture WRB2 con calipers hard vectorizzati.
-    
+    Matching stratificato per texture WRB2 con calipers hard vettorizzati.
+
     La logica KNN è adattata dal QGIS PlotMatcherAlgorithm:
       - stessa metrica Mahalanobis (VI = Σ^-1 pesata)
       - ma usa whitening + ball_tree invece di cdist brute-force
         (cdist è O(n*m) e non scala oltre 50k pixel donor)
-      - i calipers hard vengono applicati vectorialmente sui candidati KNN
-        invece di un loop Python per candidato (bottleneck eliminato)
+      - i calipers hard vengono applicati vettorialmente sui candidati KNN
+        invece di un loop Python per candidato (collo di bottiglia eliminato)
     """
     # B1: fail esplicito su bande caliper mancanti PRIMA di qualsiasi calcolo.
     validate_mandatory_calipers(proj_df, donor_df)
 
-    # B2: cap donor stratificato per texture (era sample casuale).
+    # B2: cap donor stratificato per texture (era campione casuale).
     if N_DONOR_SAMPLE is not None and len(donor_df) > int(N_DONOR_SAMPLE):
         donor_df = stratified_donor_cap(donor_df, N_DONOR_SAMPLE, strat_col="texture_class")
 
@@ -461,8 +461,8 @@ def run_matching(proj_df, donor_df, weights_dict, cont_covs, meta):
     ctx["ndvi_tol"] = max(abs(_ndvi_mean) * CALIPER_NDVI_T0_FRAC_OF_PROJECT_MEAN, 1e-9)
 
     print("    Hard calipers attivi (tutti obbligatori presenti):")
-    print(f"      texture exact : YES")
-    print(f"      tenure exact  : {'YES ('+tenure_col+')' if tenure_col else 'N/A (opzionale)'}")
+    print(f"      texture esatta: YES")
+    print(f"      tenure esatta : {'YES ('+tenure_col+')' if tenure_col else 'N/A (opzionale)'}")
     print(f"      SOC           : ±{ctx['soc_tol']:.4f}")
     print(f"      NDVI_t0       : ±{ctx['ndvi_tol']:.4f}")
     print(f"      elevation     : ±{CALIPER_ELEVATION_M:.0f} m")
@@ -520,7 +520,7 @@ def run_matching(proj_df, donor_df, weights_dict, cont_covs, meta):
     donor_reuse = np.zeros(len(donor_df), dtype=np.int32)
 
     available_set = set(donor_df["texture_class"].dropna().unique())
-    print(f"    Texture groups donor: {sorted(available_set)}")
+    print(f"    Gruppi texture donor: {sorted(available_set)}")
 
     records, tex_rows, unmatched_rows = [], [], []
     run_id   = meta.get("run_id", "")
@@ -702,7 +702,7 @@ def compute_caliper_audit(matched_df):
     return pd.DataFrame(rows)
 
 
-# ── PLOT ─────────────────────────────────────────────────────────────
+# ── GRAFICO ──────────────────────────────────────────────────────────
 
 def plot_rf_weights(imp_df, out_dir=None):
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
@@ -713,8 +713,8 @@ def plot_rf_weights(imp_df, out_dir=None):
     ax.barh(imp_df["covariate"], imp_df["rf_importance"],
             color=plt.cm.RdYlGn(imp_df["rf_importance"]/max_imp))
     ax.axvline(imp_df["rf_importance"].mean(), color="gray", ls="--", alpha=0.7)
-    ax.set(xlabel="RF Feature Importance",
-           title="Feature importance\nproject vs donor discrimination")
+    ax.set(xlabel="Importanza feature RF",
+           title="Importanza feature\ndiscriminazione progetto vs donor")
     ax.grid(axis="x", alpha=0.3)
 
     ax = axes[1]
@@ -722,7 +722,7 @@ def plot_rf_weights(imp_df, out_dir=None):
     ax.barh(s["covariate"], s["knn_weight"],
             color=plt.cm.RdYlGn(s["knn_weight"]/max_w))
     ax.axvline(1.0, color="black", ls=":", alpha=0.4, label="w=1 (neutro)")
-    ax.set(xlabel="KNN weight (data-driven)",
+    ax.set(xlabel="Peso KNN (data-driven)",
            title="Pesi Mahalanobis data-driven")
     ax.legend(fontsize=8); ax.grid(axis="x", alpha=0.3)
     plt.tight_layout()
@@ -731,7 +731,7 @@ def plot_rf_weights(imp_df, out_dir=None):
     return fig
 
 
-def plot_smd(smd_df, out_dir=None, filename="SMD_lollipop.png", title="Covariate balance"):
+def plot_smd(smd_df, out_dir=None, filename="SMD_lollipop.png", title="Bilanciamento covariate"):
     fig, ax = plt.subplots(figsize=(9, max(4, len(smd_df)*0.35)))
     colors = ["#d62728" if not p else "#2ca02c" for p in smd_df["passed"]]
     ax.hlines(smd_df.index, 0, smd_df["SMD"].fillna(0).values, lw=2, color=colors)
@@ -752,7 +752,7 @@ def plot_match_distances(matched_df, out_dir=None):
     ax.axvline(d.mean(), color="red", ls="--", label=f"Media={d.mean():.3f}")
     ax.axvline(np.percentile(d, 95), color="orange", ls=":",
                label=f"P95={np.percentile(d,95):.3f}")
-    ax.set(xlabel="Whitened Mahalanobis distance", ylabel="Pixels",
+    ax.set(xlabel="Distanza Mahalanobis whitened", ylabel="Pixel",
            title="Distribuzione distanze di match")
     ax.legend(); ax.grid(alpha=0.3)
     plt.tight_layout()
@@ -780,7 +780,7 @@ def run_matching_step(base_dirs=None, output_dir=None,
     if verbose:
         print(f"\n{'='*60}")
         print(f"STEP 02 — Matching | K={K_NEIGHBOURS} | "
-              f"candidates={KNN_QUERY_CANDIDATES} | N_donor={format_int_or_all(N_DONOR_SAMPLE)}")
+              f"candidati={KNN_QUERY_CANDIDATES} | N_donor={format_int_or_all(N_DONOR_SAMPLE)}")
         print(f"Output: {out_dir}")
         print(f"{'='*60}")
 
@@ -813,17 +813,17 @@ def run_matching_step(base_dirs=None, output_dir=None,
 
     proj_df  = proj_df.dropna(subset=cont_covs).reset_index(drop=True)
     donor_df = donor_df.dropna(subset=cont_covs).reset_index(drop=True)
-    print(f"    Project: {len(proj_df):,} | Donor: {len(donor_df):,}")
+    print(f"    Progetto: {len(proj_df):,} | Donor: {len(donor_df):,}")
     if len(proj_df) == 0 or len(donor_df) == 0:
         raise RuntimeError("Dataset vuoto dopo dropna covariate.")
 
-    print("\n[2] Prefilter donor (loose)...")
+    print("\n[2] Prefiltro donor (largo)...")
     donor_df = auto_prefilter_donor(proj_df, donor_df, cont_covs)
 
     weights_dict = {c: 1.0 for c in cont_covs}  # plain Mahalanobis: pesi uniformi (no RF)
     imp_df = None
 
-    print("\n[3] Matching KNN plain Mahalanobis + hard calipers (batched, no RF)...")
+    print("\n[3] Matching KNN plain Mahalanobis + hard calipers (a batch, senza RF)...")
     matched_df, tex_summary, unmatched_df = run_matching(
         proj_df, donor_df, weights_dict, cont_covs, meta)
 
@@ -837,11 +837,11 @@ def run_matching_step(base_dirs=None, output_dir=None,
     reuse_n    = int(matched_df.get("reuse_exceeded", pd.Series(dtype=bool)).sum()) \
                  if "reuse_exceeded" in matched_df.columns else 0
 
-    print(f"\n    Matched   : {n_matched:,}")
-    print(f"    Unmatched : {n_unmatch:,}")
-    print(f"    Unique ref: {n_unique:,}")
+    print(f"\n    Matchati  : {n_matched:,}")
+    print(f"    Non match.: {n_unmatch:,}")
+    print(f"    Ref unici : {n_unique:,}")
 
-    print(f"\n[5] SMD validation (< {SMD_THRESHOLD})...")
+    print(f"\n[5] Validazione SMD (< {SMD_THRESHOLD})...")
     smd_df = compute_smd(proj_df, matched_df, cont_covs)
     for cov, row in smd_df.iterrows():
         print(f"    {'PASS' if row['passed'] else 'FAIL':4s} {cov:20s}: SMD={row['SMD']:.4f}")
@@ -849,17 +849,17 @@ def run_matching_step(base_dirs=None, output_dir=None,
     # ndvi_smd_df = compute_smd(proj_df, matched_df, ndvi_year_cols) \
     #               if ndvi_year_cols else pd.DataFrame()
     # if not ndvi_smd_df.empty:
-    #     print("\n    Annual NDVI balance:")
+    #     print("\n    Bilanciamento NDVI annuale:")
     #     for cov, row in ndvi_smd_df.iterrows():
     #         print(f"    {'PASS' if row['passed'] else 'FAIL':4s} {cov:20s}: SMD={row['SMD']:.4f}")
 
     caliper_audit = compute_caliper_audit(matched_df)
 
     print("\n[6] Plot + salvataggio...")
-    fig_s = plot_smd(smd_df, out_dir, "SMD_lollipop.png", "Mandatory covariate balance")
+    fig_s = plot_smd(smd_df, out_dir, "SMD_lollipop.png", "Bilanciamento covariate obbligatorie")
     fig_d = plot_match_distances(matched_df, out_dir)
     # fig_n = plot_smd(ndvi_smd_df, out_dir, "SMD_annual_NDVI.png",
-                    #  "Annual NDVI balance") if not ndvi_smd_df.empty else None
+                    #  "Bilanciamento NDVI annuale") if not ndvi_smd_df.empty else None
 
     matched_df.to_parquet(out_dir / "reference_area_pixels.parquet", index=False)
     matched_df.to_csv(out_dir / "reference_area_pixels.csv", index=False)
@@ -874,8 +874,8 @@ def run_matching_step(base_dirs=None, output_dir=None,
     summary = {
         "run_id":                meta.get("run_id",""),
         "timestamp_utc":         datetime.now(timezone.utc).isoformat(),
-        "matching_method":       "Plain Mahalanobis KNN batched on-the-fly (no RF weights)",
-        "donor_pool_rule":       "Non-Forest at T0, >5km from PA (GEE Annex A.2.2 Step A)",
+        "matching_method":       "Plain Mahalanobis KNN a batch on-the-fly (senza pesi RF)",
+        "donor_pool_rule":       "Non-Forest a T0, >5km dalla PA (GEE Annex A.2.2 Step A)",
         "donor_cap_method":      "stratified_by_texture_class" if N_DONOR_SAMPLE is not None else "no_cap",
         "donor_loading_note":    ("Donor caricato interamente in RAM da parquet, poi cap "
                                   "stratificato per texture. NON è streaming a batch "
@@ -905,8 +905,8 @@ def run_matching_step(base_dirs=None, output_dir=None,
 
     if verbose:
         print(f"\n{'='*60}")
-        print(f"  Matched          : {n_matched:,}")
-        print(f"  Unmatched        : {n_unmatch:,}")
+        print(f"  Matchati         : {n_matched:,}")
+        print(f"  Non matchati     : {n_unmatch:,}")
         print(f"  SMD max          : {smd_df['SMD'].max():.4f}")
         # if not ndvi_smd_df.empty:
         #     print(f"  NDVI SMD max     : {ndvi_smd_df['SMD'].max():.4f}")
