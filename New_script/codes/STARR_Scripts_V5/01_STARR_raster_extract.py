@@ -132,6 +132,16 @@ FNF_SHAPEFILE = (
 ELIGIBLE_SHAPEFILE = (
 )
 
+# ── TOGGLE ELIGIBILITY DONOR ─────────────────────────────────────────
+# GS STARR NON richiede espressamente il filtro di eleggibilità su TUTTA
+# l'area del pool donor. Lo applichiamo comunque per conservatività.
+#   USE_ELIGIBILITY = True  → applica il filtro Eligible_FNF al donor
+#                             (conservativo, comportamento di default).
+#   USE_ELIGIBILITY = False → NON applica il filtro: il donor usa l'intera
+#                             area non-forest (minimo richiesto da GS).
+# Quando False, ELIGIBLE_SHAPEFILE viene ignorato per il donor.
+USE_ELIGIBILITY = True
+
 # Se True, usa all_touched=False (solo pixel con centroide dentro il poligono).
 # Raccomandato per poligoni precisi; mettere True per poligoni grossolani.
 SHP_ALL_TOUCHED = False
@@ -564,7 +574,8 @@ def apply_shapefile_filters(df, label, proj_or_donor,
                              audit_dict=None,
                              clip_window=None, clip_transform=None,
                              fnf_shapefile=None,
-                             eligible_shapefile=None):
+                             eligible_shapefile=None,
+                             use_eligibility=None):
     """
     Applica i due filtri shapefile a un DataFrame di pixel raster.
 
@@ -581,10 +592,15 @@ def apply_shapefile_filters(df, label, proj_or_donor,
     Entrambi i filtri possono essere disattivati impostando i path a None.
 
     fnf_shapefile / eligible_shapefile: path espliciti (override dei globali).
+    use_eligibility: se False disattiva il filtro Eligible sul donor
+        (il donor usa l'intera area non-forest). None = usa il globale
+        USE_ELIGIBILITY.
     """
     # Fallback ai globali modulo solo se non forniti come parametro
+    _use_elig = USE_ELIGIBILITY if use_eligibility is None else use_eligibility
     _fnf  = fnf_shapefile      if fnf_shapefile      is not None else FNF_SHAPEFILE
-    _elig = eligible_shapefile if eligible_shapefile is not None else ELIGIBLE_SHAPEFILE
+    _elig = ((eligible_shapefile if eligible_shapefile is not None else ELIGIBLE_SHAPEFILE)
+             if _use_elig else None)
 
     n_start = len(df)
     ad      = audit_dict or {}
@@ -610,6 +626,10 @@ def apply_shapefile_filters(df, label, proj_or_donor,
             ad["eligible_shp_error"] = str(e)
     else:
         ad["eligible_shp_applied"] = False
+        if proj_or_donor == "donor" and not _use_elig:
+            ad["eligible_disabled_by_toggle"] = True
+            print(f"    [A] Eligible_FNF DISATTIVATO (USE_ELIGIBILITY=False): "
+                  f"donor = intera area non-forest")
 
     # ── Filtro FNF18 (donor + PA) ─────────────────────────────────────
     if _fnf is not None:
@@ -823,7 +843,7 @@ def plot_aligned_pixel_grids(proj_df, donor_df, meta, out_dir=None):
              f"CRS        : {crs_utm}\n"
              f"Dim. pixel : {pix:.0f} m\n"
              f"FNF filtro : {'ON' if FNF_SHAPEFILE else 'OFF'}\n"
-             f"Eligible   : {'ON' if ELIGIBLE_SHAPEFILE else 'OFF'}",
+             f"Eligible   : {'ON' if (USE_ELIGIBILITY and ELIGIBLE_SHAPEFILE) else 'OFF'}",
              transform=ax2.transAxes, fontsize=9, va="top",
              bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.85))
     plt.tight_layout()
@@ -901,7 +921,8 @@ def run_extraction(base_dirs=None, output_dir=None, verbose=True,
                    donor_extent_km="full",
                    run_id_base=None,
                    fnf_shapefile=None,
-                   eligible_shapefile=None):
+                   eligible_shapefile=None,
+                   use_eligibility=None):
     """
     Restituisce (proj_df, donor_df, meta, out_dir).
 
@@ -926,7 +947,12 @@ def run_extraction(base_dirs=None, output_dir=None, verbose=True,
     # ── Risoluzione parametri (parametro > globale modulo) ────────────
     _run_id_base     = run_id_base     if run_id_base     is not None else RUN_ID_BASE
     _fnf_shapefile   = fnf_shapefile   if fnf_shapefile   is not None else FNF_SHAPEFILE
-    _eligible_shp    = eligible_shapefile if eligible_shapefile is not None else ELIGIBLE_SHAPEFILE
+    # Toggle eligibility: se False il donor usa l'intera area non-forest
+    # (GS non richiede eleggibilità su tutto il pool donor). Se disattivato,
+    # _eligible_shp = None → il filtro Eligible non viene applicato al donor.
+    _use_eligibility = USE_ELIGIBILITY if use_eligibility is None else use_eligibility
+    _eligible_shp    = ((eligible_shapefile if eligible_shapefile is not None else ELIGIBLE_SHAPEFILE)
+                        if _use_eligibility else None)
 
     # ── Pattern TIF: se RUN_ID_BASE è vuoto usa wildcard pura ─────────
     # _id_frag senza "_" finale: "covariates_project_{id}*.tif" batte
@@ -963,6 +989,7 @@ def run_extraction(base_dirs=None, output_dir=None, verbose=True,
         print(f"STEP 01 | {effective_run_id}")
         print(f"Extent donor       : {extent_label}")
         print(f"FNF shapefile      : {Path(_fnf_shapefile).name if _fnf_shapefile else 'OFF'}")
+        print(f"Eligibility donor  : {'ON (conservativo)' if _use_eligibility else 'OFF (intera area non-forest, minimo GS)'}")
         print(f"Eligible shapefile : {Path(_eligible_shp).name if _eligible_shp else 'OFF'}")
         print(f"Output: {out_dir}")
         print(f"{'='*65}")
@@ -1033,6 +1060,7 @@ def run_extraction(base_dirs=None, output_dir=None, verbose=True,
             clip_transform=donor_clip_tr,
             fnf_shapefile=_fnf_shapefile,
             eligible_shapefile=_eligible_shp,
+            use_eligibility=_use_eligibility,
         )
         _purge(label=f"filtro SHP donor ({n_before:,}->{len(donor_df):,})")
 
@@ -1128,6 +1156,13 @@ def run_extraction(base_dirs=None, output_dir=None, verbose=True,
             "eligible_fnf":   _eligible_shp,
             "all_touched":    SHP_ALL_TOUCHED,
         },
+        "use_eligibility":    bool(_use_eligibility),
+        "eligibility_note": (
+            "Filtro Eligible_FNF applicato al donor (conservativo)."
+            if _use_eligibility else
+            "Filtro Eligible_FNF NON applicato: il donor usa l'intera area "
+            "non-forest (GS non richiede eleggibilità su tutto il pool donor)."
+        ),
         "donor_clip": {
             "extent_km":      donor_extent_km,
             "extent_label":   extent_label,

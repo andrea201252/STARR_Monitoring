@@ -46,6 +46,12 @@ BASE_DIR: str = ""  # es. "/path/to/my/data"
 FNF_SHAPEFILE:      str | None = None  # es. "/path/to/FNF18_fullBuffer.shp"
 ELIGIBLE_SHAPEFILE: str | None = None  # es. "/path/to/Eligible_FNF_fullBuffer.shp"
 
+# Toggle eligibility sul donor. GS non richiede eleggibilità su TUTTA l'area
+# del pool donor; lo applichiamo per conservatività.
+#   True  → applica il filtro Eligible_FNF al donor (conservativo, default).
+#   False → il donor usa l'intera area non-forest (minimo GS).
+USE_ELIGIBILITY: bool = True
+
 # ══════════════════════════════════════════════════════════════════════
 
 
@@ -61,7 +67,8 @@ def main(run_step_05: bool = True,
          run_id_base: str = RUN_ID_BASE,
          base_dir: str = BASE_DIR,
          fnf_shapefile: str | None = FNF_SHAPEFILE,
-         eligible_shapefile: str | None = ELIGIBLE_SHAPEFILE) -> dict:
+         eligible_shapefile: str | None = ELIGIBLE_SHAPEFILE,
+         use_eligibility: bool = USE_ELIGIBILITY) -> dict:
     """
     Esegue la pipeline STARR completa con l'estensione donor scelta.
 
@@ -79,6 +86,10 @@ def main(run_step_05: bool = True,
         Path shapefile FNF18. None = filtro disattivato.
     eligible_shapefile : str | None
         Path shapefile Eligible_FNF. None = filtro disattivato.
+    use_eligibility : bool
+        Se True (default) applica il filtro Eligible_FNF al donor
+        (conservativo). Se False il donor usa l'intera area non-forest
+        (GS non richiede eleggibilità su tutto il pool donor).
 
     Restituisce
     -----------
@@ -99,6 +110,7 @@ def main(run_step_05: bool = True,
         run_id_base=run_id_base,
         fnf_shapefile=fnf_shapefile,
         eligible_shapefile=eligible_shapefile,
+        use_eligibility=use_eligibility,
     )
 
     # Protezione RAM: Step 02 rilegge il donor da disk con sole le colonne

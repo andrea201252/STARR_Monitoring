@@ -360,7 +360,8 @@ def run_comparison(extents: list | None = None,
                    run_step_05: bool = False,
                    run_id_base: str | None = None,
                    fnf_shapefile: str | None = None,
-                   eligible_shapefile: str | None = None) -> dict:
+                   eligible_shapefile: str | None = None,
+                   use_eligibility: bool = True) -> dict:
     """
     Esegue la pipeline Steps 01-04 per ogni extent e aggrega i risultati.
 
@@ -382,6 +383,9 @@ def run_comparison(extents: list | None = None,
         Percorso shapefile FNF18. None = filtro disattivato.
     eligible_shapefile : str | None
         Percorso shapefile Eligible_FNF. None = filtro disattivato.
+    use_eligibility : bool
+        Se True (default) applica il filtro Eligible_FNF al donor
+        (conservativo). Se False il donor usa l'intera area non-forest.
 
     Restituisce
     -----------
@@ -431,6 +435,7 @@ def run_comparison(extents: list | None = None,
                 base_dir           = str(base_dirs[0]),
                 fnf_shapefile      = fnf_shapefile,
                 eligible_shapefile = eligible_shapefile,
+                use_eligibility    = use_eligibility,
             )
             m = extract_metrics(result)
             all_results[lbl] = result
