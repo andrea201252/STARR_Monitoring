@@ -121,6 +121,12 @@ WRB_TO_TEXTURE = {
     16:"clay_loam", 17:"sandy_loam", 18:"sandy_loam", 19:"clay_loam",
     20:"clay", 21:"clay_loam", 22:"clay_loam", 23:"clay", 24:"sandy_loam",
     25:"loam", 26:"sandy_loam", 27:"clay", 28:"clay_loam", 29:"loam", 30:"clay",
+    # ── Estensioni legenda HWSD2 v2.0 (WRB2_CODE > 30) ──────────────────
+    # Aggiunte dopo aver riscontrato progetti dominati da codici non presenti
+    # nella tabella originale 1–30 (es. Muraca_Caia: 99,99% codice 33).
+    # 33 = Luvisols → clay_loam (orizzonte argico, arricchito in argilla).
+    #   NB: se il codice 33 nel tuo asset HWSD2 è Fluvisols, cambiare in "loam".
+    33:"clay_loam",
 }
 TEXTURE_FALLBACK = {
     "sand":      ["sand","sandy_loam","loam","clay_loam","clay"],
@@ -169,10 +175,23 @@ def assign_texture(df):
         raise ValueError("WRB2_CODE mancante. Verificare raster GEE Step 01.")
     df["texture_class"] = df["WRB2_CODE"].apply(wrb_to_texture)
     before = len(df)
+    # Diagnostica: quali WRB2_CODE restano non mappati in WRB_TO_TEXTURE
+    # (→ scartati). Serve a evidenziare subito codici mancanti (es. 33) invece
+    # di far propagare l'errore a valle come "Donor vuoto dopo prefiltro".
+    unmapped = df.loc[df["texture_class"].isna(), "WRB2_CODE"]
     df = df[df["texture_class"].notna()].reset_index(drop=True)
     print(f"    Filtro WRB: {before:,} → {len(df):,} px validi")
+    if len(unmapped) > 0:
+        vc  = unmapped.round().astype("Int64").value_counts().sort_values(ascending=False)
+        top = ", ".join(f"cod{int(c)}×{int(n):,}" for c, n in vc.head(8).items())
+        frac = len(unmapped) / max(before, 1) * 100
+        print(f"    ⚠ WRB2_CODE non mappati ({len(unmapped):,} px, {frac:.1f}%): {top}")
+        print(f"      → se sono suoli reali, aggiungerli a WRB_TO_TEXTURE.")
     if len(df) == 0:
-        raise RuntimeError("Nessun pixel valido dopo filtro WRB.")
+        raise RuntimeError(
+            "Nessun pixel valido dopo filtro WRB: tutti i WRB2_CODE sono fuori "
+            "da WRB_TO_TEXTURE. Vedi i codici non mappati elencati sopra e "
+            "aggiungili alla tabella WRB_TO_TEXTURE.")
     return df
 
 
