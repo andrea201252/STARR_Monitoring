@@ -89,9 +89,27 @@ SMD_THRESHOLD                     = 0.1
 RIDGE_REG                         = 1e-6
 CALIPER_SOC_FRAC_OF_PROJECT_MEAN  = 0.10
 CALIPER_NDVI_T0_FRAC_OF_PROJECT_MEAN = 0.10
-CALIPER_ELEVATION_M               = 200.0
+CALIPER_ELEVATION_M               = 200.0   # massimo metodologico (GS Table A.3)
 CALIPER_SLOPE_DEG                 = 10.0
 CALIPER_ROADS_KM                  = 1.0
+
+# Caliper elevation ADATTIVO. Su una PA quasi piatta (poca variabilità
+# altimetrica) il ±200 m non vincola nulla → l'elevation resta sbilanciato
+# (SMD alto). Se attivo, il caliper effettivo =
+#   clip(CALIPER_ELEVATION_SD_MULT × sd_elevation_PA,
+#        CALIPER_ELEVATION_MIN_M, CALIPER_ELEVATION_M)
+# → più stretto (più conservativo) per PA piatte, invariato (=200 m) per PA
+# con forte rilievo. Stringere è sempre ammesso (più conservativo del max GS).
+CALIPER_ELEVATION_ADAPTIVE        = True
+CALIPER_ELEVATION_SD_MULT         = 4.0
+CALIPER_ELEVATION_MIN_M           = 5.0
+
+# Rimozione righe con covariate fisicamente non valide / nodata prima del
+# matching: SOC_g_kg <= MIN_VALID_SOC (0 = nodata HWSD/SoilGrids; il SOC qui
+# è in t/ha) e NDVI_t0 fuori [-1, 1]. Difende il pool dai valori spurii
+# (es. SOC=0 che entrava nel donor).
+DROP_INVALID_COVARIATES           = True
+MIN_VALID_SOC                     = 0.0
 
 # ── MANDATORY HARD CALIPERS (GS STARR Annex 1 Table A.3) ─────────────
 # B1 fix: queste colonne DEVONO esistere in proj_df e donor_df.
@@ -236,6 +254,30 @@ def check_cols(df, cols, name):
     missing = [c for c in cols if c not in df.columns]
     if missing:
         raise ValueError(f"{name}: colonne mancanti: {missing}")
+
+
+def drop_invalid_covariate_rows(df, name, verbose=True):
+    """Rimuove righe con covariate fisicamente impossibili / nodata.
+
+    - SOC_g_kg <= MIN_VALID_SOC  (0 = nodata; il SOC è in t/ha)
+    - NDVI_t0 fuori [-1, 1]
+
+    Difende il pool dai valori spurii (es. SOC=0 che inquinava il donor).
+    """
+    if not DROP_INVALID_COVARIATES:
+        return df
+    n0   = len(df)
+    keep = pd.Series(True, index=df.index)
+    if "SOC_g_kg" in df.columns:
+        keep &= (df["SOC_g_kg"] > MIN_VALID_SOC)
+    if "NDVI_t0" in df.columns:
+        keep &= df["NDVI_t0"].between(-1.0, 1.0)
+    out   = df[keep].reset_index(drop=True)
+    n_rem = n0 - len(out)
+    if verbose and n_rem > 0:
+        print(f"    Outlier/nodata {name}: {n_rem:,} righe rimosse "
+              f"(SOC<=0 o NDVI fuori [-1,1]) → {len(out):,}")
+    return out
 
 
 def detect_ndvi_year_cols(columns):
@@ -389,11 +431,12 @@ def _check_calipers_vectorized(proj_row, cand_global_idx, donor_arr, ctx, tenure
         if np.isfinite(pv):
             passes &= np.abs(donor_arr["NDVI_t0"][cand_global_idx] - pv) <= ctx["ndvi_tol"]
 
-    # 5. Elevazione ±200 m
+    # 5. Elevazione (caliper adattivo: ctx["elev_tol"], default ±200 m)
     if donor_arr["elevation"] is not None:
         pv = float(proj_row.get("elevation", np.nan))
         if np.isfinite(pv):
-            passes &= np.abs(donor_arr["elevation"][cand_global_idx] - pv) <= CALIPER_ELEVATION_M
+            _elev_tol = ctx.get("elev_tol", CALIPER_ELEVATION_M)
+            passes &= np.abs(donor_arr["elevation"][cand_global_idx] - pv) <= _elev_tol
 
     # 6. Pendenza ±10°
     if donor_arr["slope_deg"] is not None:
@@ -516,12 +559,23 @@ def run_matching(proj_df, donor_df, weights_dict, cont_covs, meta):
     ctx["soc_tol"]  = max(abs(_soc_mean)  * CALIPER_SOC_FRAC_OF_PROJECT_MEAN, 1e-9)
     ctx["ndvi_tol"] = max(abs(_ndvi_mean) * CALIPER_NDVI_T0_FRAC_OF_PROJECT_MEAN, 1e-9)
 
+    # Caliper elevation adattivo alla variabilità altimetrica della PA.
+    _elev_std = float(proj_df["elevation"].std()) if "elevation" in proj_df.columns else np.nan
+    if CALIPER_ELEVATION_ADAPTIVE and np.isfinite(_elev_std) and _elev_std > 0:
+        ctx["elev_tol"] = float(np.clip(CALIPER_ELEVATION_SD_MULT * _elev_std,
+                                        CALIPER_ELEVATION_MIN_M, CALIPER_ELEVATION_M))
+    else:
+        ctx["elev_tol"] = CALIPER_ELEVATION_M
+
     print("    Hard calipers attivi (tutti obbligatori presenti):")
     print(f"      texture esatta: YES")
     print(f"      tenure esatta : {'YES ('+tenure_col+')' if tenure_col else 'N/A (opzionale)'}")
     print(f"      SOC           : ±{ctx['soc_tol']:.4f}")
     print(f"      NDVI_t0       : ±{ctx['ndvi_tol']:.4f}")
-    print(f"      elevation     : ±{CALIPER_ELEVATION_M:.0f} m")
+    print(f"      elevation     : ±{ctx['elev_tol']:.1f} m"
+          + (f"  (adattivo: sd_PA={_elev_std:.1f} m × {CALIPER_ELEVATION_SD_MULT:.0f}, "
+             f"max {CALIPER_ELEVATION_M:.0f})"
+             if CALIPER_ELEVATION_ADAPTIVE and np.isfinite(_elev_std) else ""))
     print(f"      slope         : ±{CALIPER_SLOPE_DEG:.0f}°")
     print(f"      dist_roads    : ±{CALIPER_ROADS_KM:.1f} km")
 
@@ -869,9 +923,12 @@ def run_matching_step(base_dirs=None, output_dir=None,
 
     proj_df  = proj_df.dropna(subset=cont_covs).reset_index(drop=True)
     donor_df = donor_df.dropna(subset=cont_covs).reset_index(drop=True)
+    # Rimozione outlier/nodata fisicamente non validi (SOC<=0, NDVI fuori range)
+    proj_df  = drop_invalid_covariate_rows(proj_df,  "PROGETTO")
+    donor_df = drop_invalid_covariate_rows(donor_df, "DONOR")
     print(f"    Progetto: {len(proj_df):,} | Donor: {len(donor_df):,}")
     if len(proj_df) == 0 or len(donor_df) == 0:
-        raise RuntimeError("Dataset vuoto dopo dropna covariate.")
+        raise RuntimeError("Dataset vuoto dopo dropna/outlier covariate.")
 
     print("\n[2] Prefiltro donor (largo)...")
     donor_df = auto_prefilter_donor(proj_df, donor_df, cont_covs)
