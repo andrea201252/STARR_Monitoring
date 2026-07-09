@@ -1,33 +1,38 @@
 // ============================================================
 // GOLD STANDARD STARR – Track 1 SEMDB
-// PIPELINE RASTER-FIRST — v06
+// RASTER-FIRST PIPELINE — v07
 //
-// Strategia di esportazione GEE: esporta TUTTI i pixel con covariate valide
-// (NDVI, elevation, slope, SOC, WRB, roads) e senza acqua permanente.
+// GEE export strategy: esporta TUTTI i pixel con covariate valide
+// (NDVI, elevation, slope, SOC, WRB, roads) e non-acqua permanente.
 // Il filtro forest/non-forest e le aree eleggibili vengono applicati
 // in Python (Step 01) usando due shapefile locali su Drive.
 //
-// Shapefile usati in Python (non in GEE):
-//   FNF18_fullBuffer.shp      — aree forestali a T0 2018 (da escludere dal donor)
-//   Eligible_FNF_fullBuffer.shp — aree eleggibili nel buffer (donor validi)
+// NOVITÀ v07:
+//   - NDVI compositing per STAGIONE selezionabile (A growing / C dry / annual)
+//     + statistica (median / p90 / max)  → NDVI_SEASON, NDVI_COMPOSITE_STAT
+//   - Landsat: solo L8 su richiesta (USE_L9 = false)
+//   - Maschera WRB riallineata alla legenda HWSD2 (esclude i veri non-suoli
+//     12 Glaciers, 16 Islands, 34 Open Water, 35 No Data; 31=Technosols è suolo)
+//   - SOC (t/ha): maschera nodata/0 così non entra nel pool come zero
+//   - Diagnostica DONOR + statistiche covariate PA vs DONOR alla sorgente
 // ============================================================
 
 
 // ────────────────────────────────────────────────────────────
-// 0. INPUT UTENTE
+// 0. USER INPUTS
 // ────────────────────────────────────────────────────────────
 
-var PROJECT_ASSET = 'projects/giscentral-gee/assets/Last_PA_Sanofi_Dissolve';
+var PROJECT_ASSET = 'projects/giscentral-gee/assets/Mim_Murraca_Caia/ProjectArea_Muraca';
 
-var ECOREGION_NAME = 'Southern Congolian forest-savanna';
-var COUNTRY_NAME   = 'Democratic Republic of the Congo';
+var ECOREGION_NAME = 'Zambezian-Limpopo mixed woodlands';
+var COUNTRY_NAME   = 'Mozambique';
 
-var T0_YEAR     = 2018;
+var T0_YEAR     = 2025;
 var TREND_YEARS = 5;
 var SCALE_M     = 30;
 
-var RUN_ID        = 'Idiofa_Lobi_2018_buf50km_excl5km_WRB2_v09_raster';
-var EXPORT_FOLDER = 'STARR_Idiofa_New_V2';
+var RUN_ID        = 'Muraca_Caia_2025_buf50km_excl5km_WRB2_v09_raster';
+var EXPORT_FOLDER = 'Muraca_Caia_New_V2';
 
 // Buffer di ricerca donor attorno alla PA.
 var MAX_DISTANCE_FROM_PROJECT_KM = 50;
@@ -44,14 +49,28 @@ var ROAD_DISTANCE_SEARCH_M = 50000;
 var CLOUD_COVER_MAX = 10;
 var MIN_VALID_YEARS = 4;
 
-var EXPORT_CRS = 'EPSG:32734';
+var EXPORT_CRS = 'EPSG:32736';
 
 var DIAGNOSTIC_SCALE_M = 1000;
 var MAP_PREVIEW = true;
 
+// ── NDVI compositing: STAGIONE + STATISTICA ──────────────────
+// Emisfero sud (Mozambico). Scegli la finestra del composito NDVI annuale:
+//   'growing' (A) = stagione di crescita: dic(anno-1) → apr(anno)  [picco verde]
+//   'dry'     (C) = stagione secca:       mag → set (stesso anno)  [stabile, poche nuvole]
+//   'annual'      = anno intero apr→apr (comportamento v06 originale)
+// Cambia SOLO questa riga per testare A vs C senza toccare altro.
+var NDVI_SEASON         = 'growing';   // 'growing' | 'dry' | 'annual'
+// Statistica del composito stagionale:
+//   'median' (robusta), 'p90' (vicino al picco), 'max' (greenest pixel)
+var NDVI_COMPOSITE_STAT = 'median';    // 'median' | 'p90' | 'max'
+
+// Landsat: solo L8 su richiesta (L9 disattivato).
+var USE_L9 = false;                    // false = solo L8 | true = L8 + L9
+
 
 // ────────────────────────────────────────────────────────────
-// 1. FUNZIONI DI SUPPORTO
+// 1. HELPERS
 // ────────────────────────────────────────────────────────────
 
 function fcFromGeom(geom) {
@@ -96,7 +115,7 @@ function polygonOnlyFc(fc, label) {
       .set('_src', label);
   });
 
-  print(label + ' istogramma tipo geometria:', fc.aggregate_histogram('_gtype0'));
+  print(label + ' geometry type histogram:', fc.aggregate_histogram('_gtype0'));
 
   var out = fc
     .filter(ee.Filter.inList('_gtype0', ['Polygon', 'MultiPolygon']))
@@ -106,7 +125,7 @@ function polygonOnlyFc(fc, label) {
       });
     }).map(addAreaHa);
 
-  print(label + ' feature poligonali mantenute:', out.size());
+  print(label + ' polygon features kept:', out.size());
   return out;
 }
 
@@ -144,7 +163,7 @@ function maskToPolygonFc(maskImg, geom, label, scale) {
 
 var projectFc   = ee.FeatureCollection(PROJECT_ASSET);
 var projectGeom = projectFc.geometry();
-print('Tipo geometria progetto:', projectGeom.type());
+print('Project geometry type:', projectGeom.type());
 
 var ecoregionFc = ee.FeatureCollection('RESOLVE/ECOREGIONS/2017')
   .filter(ee.Filter.eq('ECO_NAME', ECOREGION_NAME));
@@ -171,12 +190,13 @@ var donorExportGeom = cleanGeom(
   rawDonorSearchGeom.difference(projectExclusionGeom, ee.ErrorMargin(100)));
 
 print('RUN_ID:', RUN_ID, '| T0:', T0_YEAR, '| CRS:', EXPORT_CRS, '| Scale:', SCALE_M, 'm');
-print('Tipo geometria export donor:', donorExportGeom.type());
+print('NDVI season:', NDVI_SEASON, '| stat:', NDVI_COMPOSITE_STAT, '| USE_L9:', USE_L9);
+print('Donor export geometry type:', donorExportGeom.type());
 print('Filtri forest/eligible: applicati in Python (Step 01) con shapefile Drive.');
 
 
 // ────────────────────────────────────────────────────────────
-// 3. LANDSAT 8 + 9 — MASCHERAMENTO QA E NDVI
+// 3. LANDSAT — QA MASKING E NDVI (stagionale, selezionabile)
 // ────────────────────────────────────────────────────────────
 
 function maskL89_QA(img) {
@@ -200,12 +220,14 @@ function prepL89(img) {
     .copyProperties(img, ['system:time_start']);
 }
 
+// Collezione Landsat. USE_L9=false → solo L8 (richiesta). true → L8 + L9.
 function l89Collection(startDate, endDate, geom) {
   var l8 = ee.ImageCollection('LANDSAT/LC08/C02/T1_L2')
     .filterDate(startDate, endDate)
     .filterBounds(geom)
     .filter(ee.Filter.lte('CLOUD_COVER', CLOUD_COVER_MAX))
     .map(prepL89);
+  if (!USE_L9) return l8;
   var l9 = ee.ImageCollection('LANDSAT/LC09/C02/T1_L2')
     .filterDate(startDate, endDate)
     .filterBounds(geom)
@@ -214,27 +236,53 @@ function l89Collection(startDate, endDate, geom) {
   return l8.merge(l9);
 }
 
+// Finestra temporale del composito annuale per la stagione scelta.
+// 'year' = anno di riferimento del composito.
+function seasonWindow(year) {
+  year = ee.Number(year);
+  if (NDVI_SEASON === 'growing') {
+    // A — stagione di crescita emisfero sud: dic(anno-1) → apr(anno) incluso
+    return { start: ee.Date.fromYMD(year.subtract(1), 12, 1),
+             end:   ee.Date.fromYMD(year, 5, 1) };
+  } else if (NDVI_SEASON === 'dry') {
+    // C — stagione secca: mag → set (stesso anno)
+    return { start: ee.Date.fromYMD(year, 5, 1),
+             end:   ee.Date.fromYMD(year, 10, 1) };
+  }
+  // 'annual' — anno intero apr→apr (v06 originale)
+  return { start: ee.Date.fromYMD(year, 4, 1),
+           end:   ee.Date.fromYMD(year, 4, 1).advance(1, 'year') };
+}
+
+// Statistica del composito → banda 'NDVI'.
+function compositeNDVI(col) {
+  if (NDVI_COMPOSITE_STAT === 'p90') {
+    return col.reduce(ee.Reducer.percentile([90])).rename('NDVI');
+  } else if (NDVI_COMPOSITE_STAT === 'max') {
+    return col.max().rename('NDVI');
+  }
+  return col.median().rename('NDVI');
+}
+
 function annualNDVI(year) {
-  year     = ee.Number(year);
-  var col  = l89Collection(ee.Date.fromYMD(year, 4, 1),
-                            ee.Date.fromYMD(year, 4, 1).advance(1, 'year'),
-                            rawDonorSearchGeom);
+  year = ee.Number(year);
+  var w   = seasonWindow(year);
+  var col = l89Collection(w.start, w.end, rawDonorSearchGeom);
   var empty = ee.Image.constant(0).toFloat().rename('NDVI')
                .updateMask(ee.Image.constant(0));
   return ee.Image(ee.Algorithms.If(
     col.size().gt(0),
-    col.median().rename('NDVI').toFloat().clip(rawDonorSearchGeom),
+    compositeNDVI(col).toFloat().clip(rawDonorSearchGeom),
     empty
   ));
 }
 
-print('--- Scene Landsat L8+L9 per anno ---');
+print('--- Scene Landsat (' + (USE_L9 ? 'L8+L9' : 'solo L8')
+      + ') per stagione [' + NDVI_SEASON + '] ---');
 ee.List.sequence(T0_YEAR - TREND_YEARS, T0_YEAR).evaluate(function(years) {
   years.forEach(function(yr) {
-    print('Anno ' + yr + ':',
-      l89Collection(ee.Date.fromYMD(yr, 1, 1),
-                    ee.Date.fromYMD(yr+1, 1, 1),
-                    rawDonorSearchGeom).size());
+    var w = seasonWindow(yr);
+    print('Year ' + yr + ':', l89Collection(w.start, w.end, rawDonorSearchGeom).size());
   });
 });
 
@@ -275,8 +323,11 @@ var slopeDeg = ee.Terrain.slope(elevation)
 var precip = ee.Image('WORLDCLIM/V1/BIO')
   .select('bio12').rename('precip_mm_yr').toFloat().clip(rawDonorSearchGeom);
 
-// SOC: completare con l'asset usato in precedenza
-var soc = SOC.rename('SOC_g_kg').toFloat().clip(rawDonorSearchGeom);
+// SOC in t/ha. 'SOC' è l'asset importato (definiscilo negli Imports GEE).
+// Maschera i nodata/0 così non entrano nel pool come zeri.
+var soc = SOC
+  .updateMask(SOC.gt(0))
+  .rename('SOC_g_kg').toFloat().clip(rawDonorSearchGeom);
 
 var hwsd2 = ee.Image('projects/sat-io/open-datasets/FAO/HWSD_V2_SMU')
   .select('WRB2_CODE').rename('WRB2_CODE').toFloat().clip(rawDonorSearchGeom);
@@ -336,7 +387,7 @@ var ndviAnnualValidCount = ndviAnnualStack
 var ndviAnnualEnoughData = ndviAnnualValidCount
   .gte(MIN_VALID_YEARS).rename('ndvi_enough_data');
 
-print('Bande NDVI annuali:', yearBandNames);
+print('Annual NDVI bands:', yearBandNames);
 
 
 // ────────────────────────────────────────────────────────────
@@ -367,15 +418,13 @@ var covStackCore = ndviT0
   .clip(rawDonorSearchGeom)
   .toFloat();
 
-print('Bande covariate:', covStackCore.bandNames());
+print('Covariate bands:', covStackCore.bandNames());
 
 // WRB2_CODE valido = suolo reale. Legenda HWSD2 v2.0 (tabella D_WRB2code):
 // i codici NON-suolo sono 12=Glaciers, 16=Islands, 34=Open Water, 35=No Data
-// (oltre a 0=nodata). NB: il codice 31 = Technosols è un SUOLO reale, non un
-// non-suolo — la versione precedente lo escludeva per errore. I pixel non-suolo
-// vengono comunque scartati in Step 02 (assenti da WRB_TO_TEXTURE).
-var hwsdCode      = hwsd2.unmask(0);
-var hwsdSoilMask  = hwsdCode.gt(0)
+// (oltre a 0=nodata). NB: il codice 31 = Technosols è un SUOLO reale.
+var hwsdCode     = hwsd2.unmask(0);
+var hwsdSoilMask = hwsdCode.gt(0)
   .and(hwsdCode.neq(12))   // Glaciers
   .and(hwsdCode.neq(16))   // Islands
   .and(hwsdCode.neq(34))   // Open Water
@@ -399,27 +448,74 @@ var projectValidMask = validCovMask.and(baseMaskProject)
 
 
 // ────────────────────────────────────────────────────────────
-// 8. DIAGNOSTICA
+// 8. DIAGNOSTICS — PROGETTO
 // ────────────────────────────────────────────────────────────
 
 print('');
-print('=== DIAGNOSTICA (@ ' + DIAGNOSTIC_SCALE_M + ' m) ===');
-print('[1] Area totale PA ha:',
+print('=== DIAGNOSTICS PROGETTO (@ ' + DIAGNOSTIC_SCALE_M + ' m) ===');
+print('[1] Total PA area ha:',
   areaHa(ee.Image.constant(1).clip(projectGeom), projectGeom, DIAGNOSTIC_SCALE_M));
-print('[2] ndviAnnualEnoughData dentro PA ha:',
+print('[2] ndviAnnualEnoughData inside PA ha:',
   areaHa(ndviAnnualEnoughData.clip(projectGeom), projectGeom, DIAGNOSTIC_SCALE_M));
-print('[3] WRB valido dentro PA ha:',
-  areaHa(hwsdSoilMask.clip(projectGeom),
-         projectGeom, DIAGNOSTIC_SCALE_M));
-print('[4] permanentWater.not() dentro PA ha:',
+print('[3] WRB valid inside PA ha:',
+  areaHa(hwsdSoilMask.clip(projectGeom), projectGeom, DIAGNOSTIC_SCALE_M));
+print('[4] permanentWater.not() inside PA ha:',
   areaHa(permanentWaterMask.not().clip(projectGeom), projectGeom, DIAGNOSTIC_SCALE_M));
-print('[5] Maschera valida PROGETTO (covariate + no acqua) ha:',
+print('[5] PROJECT valid mask (covariates + no water) ha:',
   areaHa(projectValidMask, projectGeom, DIAGNOSTIC_SCALE_M));
-print('[6] Maschera valida DONOR ha (prima del filtro Python forest/eligible):',
+
+
+// ────────────────────────────────────────────────────────────
+// 8b. DIAGNOSTICS — DONOR (aggiunta v07)
+// ────────────────────────────────────────────────────────────
+
+var _pixHa = (SCALE_M * SCALE_M) / 10000.0;   // ha per pixel (30m -> 0.09 ha)
+
+print('');
+print('=== DIAGNOSTICS DONOR (@ ' + DIAGNOSTIC_SCALE_M + ' m) ===');
+print('[D1] Donor search area (buffer∩eco \\ excl) ha:',
+  areaHa(ee.Image.constant(1).clip(donorExportGeom), donorExportGeom, DIAGNOSTIC_SCALE_M));
+print('[D2] WRB valid inside DONOR ha:',
+  areaHa(hwsdSoilMask.clip(donorExportGeom), donorExportGeom, DIAGNOSTIC_SCALE_M));
+print('[D3] ndviAnnualEnoughData inside DONOR ha:',
+  areaHa(ndviAnnualEnoughData.clip(donorExportGeom), donorExportGeom, DIAGNOSTIC_SCALE_M));
+print('[D4] permanentWater.not() inside DONOR ha:',
+  areaHa(permanentWaterMask.not().clip(donorExportGeom), donorExportGeom, DIAGNOSTIC_SCALE_M));
+print('[D5] DONOR valid mask ha (prima del filtro Python forest/eligible):',
   areaHa(donorValidMask, donorExportGeom, DIAGNOSTIC_SCALE_M));
+print('[D6] DONOR valid stima pixel (~area_ha / ' + _pixHa.toFixed(3) + '):',
+  ee.Number(areaHa(donorValidMask, donorExportGeom, DIAGNOSTIC_SCALE_M)).divide(_pixHa).round());
 print('NOTA: il filtro forest/eligible viene applicato in Python (Step 01).');
 print('      FNF18_fullBuffer.shp -> esclude aree forest a T0');
 print('      Eligible_FNF_fullBuffer.shp -> mantiene solo aree eleggibili donor');
+
+
+// ────────────────────────────────────────────────────────────
+// 8c. STATISTICHE COVARIATE — PA vs DONOR (mean/stdDev/min/max)
+//     Per verificare la QUALITÀ del dato e dove nasce lo squilibrio
+//     direttamente alla sorgente (prima del download).
+// ────────────────────────────────────────────────────────────
+
+function covStats(band, mask, geom) {
+  return covStackCore.select(band).updateMask(mask).reduceRegion({
+    reducer: ee.Reducer.mean()
+      .combine({ reducer2: ee.Reducer.stdDev(), sharedInputs: true })
+      .combine({ reducer2: ee.Reducer.minMax(),  sharedInputs: true }),
+    geometry: geom,
+    scale: DIAGNOSTIC_SCALE_M,
+    maxPixels: 1e13,
+    bestEffort: true,
+    tileScale: 4
+  });
+}
+
+print('');
+print('=== STATISTICHE COVARIATE PA vs DONOR (@ ' + DIAGNOSTIC_SCALE_M + ' m) ===');
+['NDVI_t0', 'NDVI_slope_5yr', 'elevation', 'slope_deg',
+ 'precip_mm_yr', 'SOC_g_kg', 'dist_roads_km'].forEach(function (b) {
+  print('  PA  » ' + b, covStats(b, projectValidMask, projectGeom));
+  print('  DON » ' + b, covStats(b, donorValidMask,   donorExportGeom));
+});
 
 
 // ────────────────────────────────────────────────────────────
@@ -438,12 +534,12 @@ var donorRaster = covStackCore
   .updateMask(donorValidMask)
   .toFloat();
 
-print('Bande raster progetto:', projectRaster.bandNames());
-print('Bande raster donor:', donorRaster.bandNames());
+print('Project raster bands:', projectRaster.bandNames());
+print('Donor raster bands:', donorRaster.bandNames());
 
 
 // ────────────────────────────────────────────────────────────
-// 10. ESPORTAZIONE SHAPEFILE CONFINI
+// 10. EXPORT SHAPEFILE CONFINI
 // ────────────────────────────────────────────────────────────
 
 var projectBoundaryFc = projectFc.map(function(f) {
@@ -495,7 +591,7 @@ Export.table.toDrive({
 
 
 // ────────────────────────────────────────────────────────────
-// 11. ESPORTAZIONE RASTER COVARIATE
+// 11. EXPORT RASTER COVARIATE
 // ────────────────────────────────────────────────────────────
 
 Export.image.toDrive({
@@ -521,7 +617,7 @@ Export.image.toDrive({
 });
 
 print('');
-print('=== Task di esportazione creati ===');
+print('=== Export tasks creati ===');
 print('Raster project  :', 'covariates_project_' + RUN_ID);
 print('Raster donor    :', 'covariates_donor_' + RUN_ID,
       '(tutti i pixel con covariate valide, senza filtro forest)');
@@ -532,25 +628,26 @@ print('  Eligible_FNF_fullBuffer.shp -> mantiene solo aree eleggibili donor');
 
 
 // ────────────────────────────────────────────────────────────
-// 12. ANTEPRIMA MAPPA
+// 12. MAP PREVIEW
 // ────────────────────────────────────────────────────────────
 
 if (MAP_PREVIEW) {
   Map.centerObject(projectFc, 10);
   Map.addLayer(projectFc,               { color: 'red'    }, 'PA AOI', true);
-  Map.addLayer(fcFromGeom(donorExportGeom), { color: '00ffff' }, 'Geometria export donor', false);
-  Map.addLayer(fcFromGeom(projectExclusionGeom), { color: 'ff9900' }, 'Buffer esclusione 5km', false);
-  Map.addLayer(permanentWaterMask.selfMask(), { palette: ['0000ff'] }, 'Acqua permanente', false);
+  Map.addLayer(fcFromGeom(donorExportGeom), { color: '00ffff' }, 'Donor export geom', false);
+  Map.addLayer(fcFromGeom(projectExclusionGeom), { color: 'ff9900' }, 'Excl. buffer 5km', false);
+  Map.addLayer(permanentWaterMask.selfMask(), { palette: ['0000ff'] }, 'Permanent water', false);
   Map.addLayer(ndviAnnualValidCount.clip(rawDonorSearchGeom), {
     min: 0, max: TREND_YEARS, palette: ['red','orange','yellow','lime','green']
-  }, 'Anni NDVI validi', true);
-  Map.addLayer(validCovMask.selfMask(),    { palette: ['00aaff'] }, 'Covariate valide', false);
-  Map.addLayer(projectValidMask.selfMask(), { palette: ['ff2200'] }, 'Progetto → export', true);
-  Map.addLayer(donorValidMask.selfMask(),   { palette: ['00aa00'] }, 'Donor → export (pre filtro Python)', false);
+  }, 'NDVI valid years', true);
+  Map.addLayer(validCovMask.selfMask(),    { palette: ['00aaff'] }, 'Valid covariates', false);
+  Map.addLayer(projectValidMask.selfMask(), { palette: ['ff2200'] }, 'Project → export', true);
+  Map.addLayer(donorValidMask.selfMask(),   { palette: ['00aa00'] }, 'Donor → export (pre Python filter)', false);
   Map.addLayer(ndviT0, { min: 0, max: 0.8, palette: ['brown','yellow','darkgreen'] }, 'NDVI T0', false);
-  Map.addLayer(distRoads, { min: 0, max: 20, palette: ['red','yellow','blue'] }, 'Distanza strade km', false);
+  Map.addLayer(distRoads, { min: 0, max: 20, palette: ['red','yellow','blue'] }, 'Dist roads km', false);
 }
 
 // ============================================================
-// FINE v06 — filtri forest/eligible in Python (Step 01)
+// END v07 — NDVI stagionale (A/C/annual) + solo L8 + diagnostica donor
+//           filtri forest/eligible in Python (Step 01)
 // ============================================================
