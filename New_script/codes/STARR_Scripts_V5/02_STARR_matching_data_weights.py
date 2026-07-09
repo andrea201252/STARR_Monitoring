@@ -112,21 +112,58 @@ TENURE_COLUMN_CANDIDATES = [
     "tenure_status", "Tenure", "TENURE", "legal_status", "LegalStatus", "LEGAL_STATUS"
 ]
 
-# ── WRB TEXTURE ──────────────────────────────────────────────────────
-
+# ── WRB2_CODE → texture del suolo (legenda HWSD2 v2.0) ───────────────
+# RIALLINEATA alla numerazione REALE di HWSD2 (tabella D_WRB2code del
+# database HWSD2.mdb) e alla texture USDA DOMINANTE per gruppo di suolo,
+# ricavata data-driven da HWSD2_SMU.TEXTURE_USDA (dominante pesata per SHARE
+# sui 29.539 componenti del database).
+#
+# Sostituisce la tabella precedente 1–30 che NON seguiva la numerazione
+# HWSD2: es. il vecchio codice 12 era "loam" ma in HWSD2 il 12 = Glaciers;
+# il 16 era "clay_loam" ma è Islands (non-suoli). Il caliper texture era
+# quindi sistematicamente errato per i dati HWSD2.
+#
+# Classi USDA(13) → 5 bucket STARR:
+#   clay        ← Clay heavy, Silty clay, Clay light, Sandy clay   {1,2,3,8}
+#   clay_loam   ← Silty clay loam, Clay loam, Sandy clay loam      {4,5,10}
+#   loam        ← Silt, Silt loam, Loam                            {6,7,9}
+#   sandy_loam  ← Sandy loam, Loamy sand                           {11,12}
+#   sand        ← Sand                                             {13}
+#
+# Codici non-suolo (12 Glaciers, 16 Islands, 34 Open Water, 35 No Data) e
+# Technosols (31, privo di dato texture in HWSD2) NON sono mappati → i pixel
+# relativi vengono scartati in Step 02 (con avviso diagnostico).
 WRB_TO_TEXTURE = {
-    1:"clay_loam", 2:"clay", 3:"loam", 4:"sand", 5:"loam",
-    6:"clay_loam", 7:"loam", 8:"clay_loam", 9:"loam", 10:"loam",
-    11:"clay", 12:"loam", 13:"clay_loam", 14:"sandy_loam", 15:"loam",
-    16:"clay_loam", 17:"sandy_loam", 18:"sandy_loam", 19:"clay_loam",
-    20:"clay", 21:"clay_loam", 22:"clay_loam", 23:"clay", 24:"sandy_loam",
-    25:"loam", 26:"sandy_loam", 27:"clay", 28:"clay_loam", 29:"loam", 30:"clay",
-    # ── Estensioni legenda HWSD2 v2.0 (WRB2_CODE > 30) ──────────────────
-    # Aggiunte dopo aver riscontrato progetti dominati da codici non presenti
-    # nella tabella originale 1–30 (es. Muraca_Caia: 99,99% codice 33).
-    # 33 = Luvisols → clay_loam (orizzonte argico, arricchito in argilla).
-    #   NB: se il codice 33 nel tuo asset HWSD2 è Fluvisols, cambiare in "loam".
-    33:"clay_loam",
+    1:"sandy_loam",   # Acrisols
+    2:"loam",         # Alisols
+    3:"loam",         # Andosols
+    4:"sandy_loam",   # Arenosols
+    5:"loam",         # Anthrosols
+    6:"loam",         # Chernozems
+    7:"loam",         # Calcisols
+    8:"clay_loam",    # Cambisols
+    9:"loam",         # Cryosols
+    10:"loam",        # Fluvisols
+    11:"clay",        # Ferralsols
+    13:"clay_loam",   # Gleysols
+    14:"loam",        # Gypsisols
+    15:"clay_loam",   # Histosols
+    17:"loam",        # Kastanozems
+    18:"loam",        # Leptosols
+    19:"loam",        # Luvisols
+    20:"sandy_loam",  # Lixisols
+    21:"clay",        # Nitisols
+    22:"loam",        # Phaeozems
+    23:"loam",        # Planosols
+    24:"sandy_loam",  # Plinthosols
+    25:"sandy_loam",  # Podzols
+    26:"sandy_loam",  # Regosols
+    27:"loam",        # Retisols
+    28:"loam",        # Solonchaks
+    29:"loam",        # Solonetz
+    30:"loam",        # Stagnosols
+    32:"loam",        # Umbrisols
+    33:"clay",        # Vertisols
 }
 TEXTURE_FALLBACK = {
     "sand":      ["sand","sandy_loam","loam","clay_loam","clay"],

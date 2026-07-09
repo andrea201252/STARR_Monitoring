@@ -369,13 +369,25 @@ var covStackCore = ndviT0
 
 print('Bande covariate:', covStackCore.bandNames());
 
+// WRB2_CODE valido = suolo reale. Legenda HWSD2 v2.0 (tabella D_WRB2code):
+// i codici NON-suolo sono 12=Glaciers, 16=Islands, 34=Open Water, 35=No Data
+// (oltre a 0=nodata). NB: il codice 31 = Technosols è un SUOLO reale, non un
+// non-suolo — la versione precedente lo escludeva per errore. I pixel non-suolo
+// vengono comunque scartati in Step 02 (assenti da WRB_TO_TEXTURE).
+var hwsdCode      = hwsd2.unmask(0);
+var hwsdSoilMask  = hwsdCode.gt(0)
+  .and(hwsdCode.neq(12))   // Glaciers
+  .and(hwsdCode.neq(16))   // Islands
+  .and(hwsdCode.neq(34))   // Open Water
+  .and(hwsdCode.neq(35));  // No Data
+
 var validCovMask = ndviT0.mask()
   .and(ndviAnnualEnoughData)
   .and(elevation.mask())
   .and(slopeDeg.mask())
   .and(precip.mask())
   .and(soc.mask())
-  .and(hwsd2.unmask(0).gt(0).and(hwsd2.unmask(0).neq(31)))
+  .and(hwsdSoilMask)
   .rename('valid_covariate_mask');
 
 // Maschere finali: covariate valide + no acqua permanente
@@ -397,7 +409,7 @@ print('[1] Area totale PA ha:',
 print('[2] ndviAnnualEnoughData dentro PA ha:',
   areaHa(ndviAnnualEnoughData.clip(projectGeom), projectGeom, DIAGNOSTIC_SCALE_M));
 print('[3] WRB valido dentro PA ha:',
-  areaHa(hwsd2.unmask(0).gt(0).and(hwsd2.unmask(0).neq(31)).clip(projectGeom),
+  areaHa(hwsdSoilMask.clip(projectGeom),
          projectGeom, DIAGNOSTIC_SCALE_M));
 print('[4] permanentWater.not() dentro PA ha:',
   areaHa(permanentWaterMask.not().clip(projectGeom), projectGeom, DIAGNOSTIC_SCALE_M));

@@ -1,0 +1,36 @@
+WRB2_CODE,RSG_name,type,STARR_texture_bucket,dominant_pct_share_weighted,full_distribution
+1,Acrisols,SOIL,sandy_loam,55,sand:0%; sandy_loam:55%; loam:2%; clay_loam:43%; clay:0%
+2,Alisols,SOIL,loam,59,sand:0%; sandy_loam:5%; loam:59%; clay_loam:36%; clay:0%
+3,Andosols,SOIL,loam,69,sand:0%; sandy_loam:21%; loam:69%; clay_loam:10%; clay:0%
+4,Arenosols,SOIL,sandy_loam,100,sand:0%; sandy_loam:100%; loam:0%; clay_loam:0%; clay:0%
+5,Anthrosols,SOIL,loam,85,sand:0%; sandy_loam:15%; loam:85%; clay_loam:0%; clay:0%
+6,Chernozems,SOIL,loam,66,sand:0%; sandy_loam:0%; loam:66%; clay_loam:34%; clay:0%
+7,Calcisols,SOIL,loam,61,sand:0%; sandy_loam:25%; loam:61%; clay_loam:14%; clay:0%
+8,Cambisols,SOIL,clay_loam,52,sand:0%; sandy_loam:0%; loam:48%; clay_loam:52%; clay:1%
+9,Cryosols,SOIL,loam,81,sand:0%; sandy_loam:18%; loam:81%; clay_loam:1%; clay:0%
+10,Fluvisols,SOIL,loam,85,sand:0%; sandy_loam:9%; loam:85%; clay_loam:6%; clay:0%
+11,Ferralsols,SOIL,clay,81,sand:0%; sandy_loam:0%; loam:0%; clay_loam:19%; clay:81%
+12,Glaciers,NON-SOIL,(escluso),,
+13,Gleysols,SOIL,clay_loam,55,sand:0%; sandy_loam:5%; loam:28%; clay_loam:55%; clay:11%
+14,Gypsisols,SOIL,loam,71,sand:0%; sandy_loam:29%; loam:71%; clay_loam:0%; clay:0%
+15,Histosols,SOIL,clay_loam,51,sand:0%; sandy_loam:0%; loam:25%; clay_loam:51%; clay:24%
+16,Islands,NON-SOIL,(escluso),,
+17,Kastanozems,SOIL,loam,71,sand:0%; sandy_loam:0%; loam:71%; clay_loam:29%; clay:0%
+18,Leptosols,SOIL,loam,71,sand:0%; sandy_loam:27%; loam:71%; clay_loam:2%; clay:0%
+19,Luvisols,SOIL,loam,42,sand:0%; sandy_loam:31%; loam:42%; clay_loam:27%; clay:0%
+20,Lixisols,SOIL,sandy_loam,82,sand:0%; sandy_loam:82%; loam:0%; clay_loam:17%; clay:0%
+21,Nitisols,SOIL,clay,75,sand:0%; sandy_loam:0%; loam:0%; clay_loam:24%; clay:75%
+22,Phaeozems,SOIL,loam,56,sand:0%; sandy_loam:0%; loam:56%; clay_loam:44%; clay:0%
+23,Planosols,SOIL,loam,50,sand:0%; sandy_loam:50%; loam:50%; clay_loam:0%; clay:0%
+24,Plinthosols,SOIL,sandy_loam,68,sand:0%; sandy_loam:68%; loam:4%; clay_loam:23%; clay:5%
+25,Podzols,SOIL,sandy_loam,100,sand:0%; sandy_loam:100%; loam:0%; clay_loam:0%; clay:0%
+26,Regosols,SOIL,sandy_loam,84,sand:0%; sandy_loam:84%; loam:13%; clay_loam:4%; clay:0%
+27,Retisols,SOIL,loam,100,sand:0%; sandy_loam:0%; loam:100%; clay_loam:0%; clay:0%
+28,Solonchaks,SOIL,loam,73,sand:0%; sandy_loam:1%; loam:73%; clay_loam:26%; clay:0%
+29,Solonetz,SOIL,loam,91,sand:0%; sandy_loam:8%; loam:91%; clay_loam:0%; clay:0%
+30,Stagnosols,SOIL,loam,84,sand:0%; sandy_loam:2%; loam:84%; clay_loam:14%; clay:0%
+31,Technosols,SOIL,(no texture data),,
+32,Umbrisols,SOIL,loam,60,sand:0%; sandy_loam:2%; loam:60%; clay_loam:28%; clay:11%
+33,Vertisols,SOIL,clay,100,sand:0%; sandy_loam:0%; loam:0%; clay_loam:0%; clay:100%
+34,Open Water,NON-SOIL,(escluso),,
+35,No Data,NON-SOIL,(escluso),,
