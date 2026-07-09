@@ -420,14 +420,17 @@ var covStackCore = ndviT0
 
 print('Covariate bands:', covStackCore.bandNames());
 
-// WRB2_CODE valido = suolo reale. Legenda HWSD2 v2.0 (tabella D_WRB2code):
-// i codici NON-suolo sono 12=Glaciers, 16=Islands, 34=Open Water, 35=No Data
-// (oltre a 0=nodata). NB: il codice 31 = Technosols è un SUOLO reale.
+// WRB2_CODE valido come DONOR. Legenda HWSD2 v2.0 (tabella D_WRB2code).
+// Esclusi i non-suoli (12 Glaciers, 16 Islands, 34 Open Water, 35 No Data,
+// oltre a 0=nodata) e i Technosols (31): sono un suolo REALE ma antropico
+// (non-analogo naturale) e privi di dato texture in HWSD2 → non validi come
+// donor (verrebbero comunque scartati in Step 02).
 var hwsdCode     = hwsd2.unmask(0);
 var hwsdSoilMask = hwsdCode.gt(0)
-  .and(hwsdCode.neq(12))   // Glaciers
-  .and(hwsdCode.neq(16))   // Islands
-  .and(hwsdCode.neq(34))   // Open Water
+  .and(hwsdCode.neq(12))   // Glaciers (non-suolo)
+  .and(hwsdCode.neq(16))   // Islands (non-suolo)
+  .and(hwsdCode.neq(31))   // Technosols (antropico, senza texture HWSD2)
+  .and(hwsdCode.neq(34))   // Open Water (non-suolo)
   .and(hwsdCode.neq(35));  // No Data
 
 var validCovMask = ndviT0.mask()

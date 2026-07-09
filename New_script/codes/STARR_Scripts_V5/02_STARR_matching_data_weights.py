@@ -183,6 +183,17 @@ WRB_TO_TEXTURE = {
     32:"loam",        # Umbrisols
     33:"clay",        # Vertisols
 }
+
+# Codici HWSD2 scartati DI PROPOSITO dal donor pool (non è un errore):
+#   - non-suoli: 12 Glaciers, 16 Islands, 34 Open Water, 35 No Data
+#   - antropici: 31 Technosols (non-analogo naturale, e privo di texture in HWSD2)
+# Se compaiono nel donor vengono rimossi in Step 02; la diagnostica li segnala
+# come "esclusi (attesi)" e NON come codici da aggiungere a WRB_TO_TEXTURE.
+WRB_NONDONOR_CODES = {
+    12: "Glaciers", 16: "Islands", 31: "Technosols(antropico)",
+    34: "OpenWater", 35: "NoData",
+}
+
 TEXTURE_FALLBACK = {
     "sand":      ["sand","sandy_loam","loam","clay_loam","clay"],
     "sandy_loam":["sandy_loam","sand","loam","clay_loam","clay"],
@@ -237,11 +248,20 @@ def assign_texture(df):
     df = df[df["texture_class"].notna()].reset_index(drop=True)
     print(f"    Filtro WRB: {before:,} → {len(df):,} px validi")
     if len(unmapped) > 0:
-        vc  = unmapped.round().astype("Int64").value_counts().sort_values(ascending=False)
-        top = ", ".join(f"cod{int(c)}×{int(n):,}" for c, n in vc.head(8).items())
+        vc = unmapped.round().astype("Int64").value_counts().sort_values(ascending=False)
         frac = len(unmapped) / max(before, 1) * 100
-        print(f"    ⚠ WRB2_CODE non mappati ({len(unmapped):,} px, {frac:.1f}%): {top}")
-        print(f"      → se sono suoli reali, aggiungerli a WRB_TO_TEXTURE.")
+        # Separa i codici esclusi di proposito (non-suoli + Technosols) da quelli
+        # davvero inattesi (che meriterebbero di essere mappati).
+        known = [(c, n) for c, n in vc.items() if int(c) in WRB_NONDONOR_CODES]
+        other = [(c, n) for c, n in vc.items() if int(c) not in WRB_NONDONOR_CODES]
+        if known:
+            kk = ", ".join(f"{WRB_NONDONOR_CODES[int(c)]}(cod{int(c)})×{int(n):,}"
+                           for c, n in known)
+            print(f"    WRB2_CODE non-donor esclusi (attesi, {frac:.2f}%): {kk}")
+        if other:
+            oo = ", ".join(f"cod{int(c)}×{int(n):,}" for c, n in other)
+            print(f"    ⚠ WRB2_CODE INATTESI non mappati: {oo}")
+            print(f"      → se sono suoli reali, aggiungerli a WRB_TO_TEXTURE.")
     if len(df) == 0:
         raise RuntimeError(
             "Nessun pixel valido dopo filtro WRB: tutti i WRB2_CODE sono fuori "
