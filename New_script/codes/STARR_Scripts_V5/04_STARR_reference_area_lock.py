@@ -453,11 +453,29 @@ def cov_summary(df, cont_covs):
 
 
 def diagnostics_plot(points_gdf, support_gdf, bounds_gdf, mon_gdf, out_dir=None):
+    # Overlay PA: pixel di progetto associati ai match (proj_lon/proj_lat, se presenti),
+    # riproiettati nel CRS metrico del plot. Mostra DOVE sta la PA rispetto alla RA.
+    proj_pts = None
+    if {"proj_lon", "proj_lat"}.issubset(points_gdf.columns):
+        _pp = points_gdf[["proj_lon", "proj_lat"]].dropna()
+        _pp = _pp[np.isfinite(_pp["proj_lon"]) & np.isfinite(_pp["proj_lat"])]
+        if len(_pp) > 0:
+            try:
+                proj_pts = gpd.GeoDataFrame(
+                    geometry=gpd.points_from_xy(_pp["proj_lon"], _pp["proj_lat"]),
+                    crs=CRS_GEO).to_crs(points_gdf.crs)
+            except Exception:
+                proj_pts = None
+
     fig, axes = plt.subplots(1, 3, figsize=(21, 7))
     ax = axes[0]
-    points_gdf.plot(ax=ax, markersize=1.2, alpha=0.65)
-    ax.set_title(f"1. Donor pixel matchati e twin-tested\n{len(points_gdf):,} centri unici")
+    if proj_pts is not None:
+        proj_pts.plot(ax=ax, markersize=1.0, alpha=0.45, color="tomato", label="PA (progetto)")
+    points_gdf.plot(ax=ax, markersize=1.2, alpha=0.65, color="#1f77b4", label="Donor RA")
+    ax.set_title(f"1. Donor RA (blu) vs PA (rosso)\n{len(points_gdf):,} centri unici RA"
+                 + (f" | {len(proj_pts):,} pt PA" if proj_pts is not None else ""))
     ax.set_aspect("equal", adjustable="datalim"); ax.grid(alpha=0.3)
+    ax.legend(markerscale=6, fontsize=8, loc="best")
 
     ax = axes[1]
     support_gdf.plot(ax=ax, alpha=0.25, edgecolor="black", linewidth=0.1)
@@ -466,10 +484,12 @@ def diagnostics_plot(points_gdf, support_gdf, bounds_gdf, mon_gdf, out_dir=None)
     ax.set_aspect("equal", adjustable="datalim"); ax.grid(alpha=0.3)
 
     ax = axes[2]
-    bounds_gdf.plot(ax=ax, alpha=0.25, edgecolor="darkgreen", linewidth=1.0)
+    if proj_pts is not None:
+        proj_pts.plot(ax=ax, markersize=1.0, alpha=0.35, color="tomato", label="PA (progetto)")
+    bounds_gdf.plot(ax=ax, alpha=0.25, edgecolor="darkgreen", linewidth=1.0, label="RA bloccata")
     if gdf_is_nonempty(mon_gdf):
-        mon_gdf.to_crs(bounds_gdf.crs).plot(ax=ax, markersize=1.2, alpha=0.6)
-    ax.set_title(f"3. RA finale bloccata\n{bounds_gdf.total_ha.iloc[0]:,.2f} ha | monitoraggio={gdf_nrows(mon_gdf):,}")
+        mon_gdf.to_crs(bounds_gdf.crs).plot(ax=ax, markersize=1.2, alpha=0.6, color="#1f77b4")
+    ax.set_title(f"3. RA finale bloccata (verde) vs PA (rosso)\n{bounds_gdf.total_ha.iloc[0]:,.2f} ha | monitoraggio={gdf_nrows(mon_gdf):,}")
     ax.set_aspect("equal", adjustable="datalim"); ax.grid(alpha=0.3)
     plt.tight_layout()
     if out_dir:
