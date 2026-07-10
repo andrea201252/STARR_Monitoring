@@ -114,7 +114,7 @@ CALIPER_ROADS_KM                  = 1.0
 #        CALIPER_ELEVATION_MIN_M, CALIPER_ELEVATION_M)
 # → più stretto (più conservativo) per PA piatte, invariato (=200 m) per PA
 # con forte rilievo. Stringere è sempre ammesso (più conservativo del max GS).
-CALIPER_ELEVATION_ADAPTIVE        = True
+CALIPER_ELEVATION_ADAPTIVE        = False   # False → caliper fisso ±CALIPER_ELEVATION_M (200 m, valore GS Table A.3)
 CALIPER_ELEVATION_SD_MULT         = 4.0
 CALIPER_ELEVATION_MIN_M           = 5.0
 
