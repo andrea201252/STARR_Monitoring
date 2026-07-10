@@ -72,6 +72,14 @@ N_DONOR_SAMPLE        = 300_000
 ALLOW_TEXTURE_FALLBACK = False
 MAX_DONOR_REUSE       = 1
 
+# Covariate da ESCLUDERE dal matching (prefiltro + Mahalanobis + validazione SMD).
+# precip_mm_yr (WorldClim BIO12, ~1 km) NON è obbligatoria in GS Annex 1 Table A.3
+# ed è troppo grossolana per una PA piccola: il suo prefiltro decima il donor pool
+# (es. Muraca_Caia: 938k → 79k, -92%) tagliando donor climaticamente quasi identici,
+# senza migliorare il bilanciamento. Escludendola il pool resta ampio e le covariate
+# OBBLIGATORIE si bilanciano molto meglio. Mettere [] per usare tutte le covariate.
+EXCLUDE_COVARIATES_FROM_MATCHING = ["precip_mm_yr"]
+
 # ── BATCH KNN (FIX RAM) ───────────────────────────────────────────────
 # zp_w NON viene mai precalcolato per tutti i project pixel.
 # Lo scaling+whitening avviene on-the-fly per ogni batch.
@@ -924,9 +932,15 @@ def run_matching_step(base_dirs=None, output_dir=None,
 
     cont_covs = [c for c in (meta.get("continuous_covariates") or [])
                  if c not in ("pixel_area_ha", "ndvi_valid_years")
+                 and c not in EXCLUDE_COVARIATES_FROM_MATCHING
                  and not c.startswith("precip_bin")]
     if not cont_covs:
         raise RuntimeError("continuous_covariates vuoto. Eseguire Step 01.")
+    if EXCLUDE_COVARIATES_FROM_MATCHING:
+        _excl = [c for c in EXCLUDE_COVARIATES_FROM_MATCHING
+                 if c in (meta.get("continuous_covariates") or [])]
+        if _excl:
+            print(f"    Covariate ESCLUSE dal matching (config): {_excl}")
 
     ndvi_year_cols = meta.get("ndvi_year_cols") or detect_ndvi_year_cols(proj_df.columns)
     print(f"    Covariate Mahalanobis: {cont_covs}")
