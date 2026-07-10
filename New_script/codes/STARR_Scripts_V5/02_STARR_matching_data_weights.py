@@ -72,12 +72,18 @@ N_DONOR_SAMPLE        = 300_000
 ALLOW_TEXTURE_FALLBACK = False
 MAX_DONOR_REUSE       = 1
 
-# Covariate da ESCLUDERE dal matching (prefiltro + Mahalanobis + validazione SMD).
-# precip_mm_yr (WorldClim BIO12, ~1 km) NON è obbligatoria in GS Annex 1 Table A.3
-# ed è troppo grossolana per una PA piccola: il suo prefiltro decima il donor pool
-# (es. Muraca_Caia: 938k → 79k, -92%) tagliando donor climaticamente quasi identici,
-# senza migliorare il bilanciamento. Escludendola il pool resta ampio e le covariate
-# OBBLIGATORIE si bilanciano molto meglio. Mettere [] per usare tutte le covariate.
+# Covariate da ESCLUDERE dal matching a VALORI (prefiltro + Mahalanobis + SMD).
+#
+# precip_mm_yr: in GS Annex 1 Table A.3 la Precipitation (MAP) è obbligatoria ma
+# la sua tolleranza è "Same Isohyet / Ecoregion" — cioè un vincolo CATEGORIALE
+# di zona, NON un caliper sui valori (±mm). Va quindi soddisfatta a monte, non
+# come covariata continua: il donor pool è già ritagliato sull'ECOREGIONE del
+# progetto nel GEE (rawDonorSearchGeom = buffer ∩ ecoregione), quindi il
+# requisito "same ecoregion" è rispettato per costruzione.
+# Usarla come valore continuo era errato (e decimava il pool: es. Muraca_Caia
+# 938k → 79k, -92%). Se serve la stringenza "same isohyet", si aggiunge un
+# match categoriale su bande di pioggia (isoiete), non un caliper stretto.
+# Mettere [] per (ri)usare tutte le covariate a valori.
 EXCLUDE_COVARIATES_FROM_MATCHING = ["precip_mm_yr"]
 
 # ── BATCH KNN (FIX RAM) ───────────────────────────────────────────────
