@@ -169,8 +169,8 @@ def main(run_step_05: bool = True,
     }
 
     if not run_step_05:
-        print(f"\n[STOP] Fermato dopo Step 04. "
-              f"Step 05 richiede i dati di variazione dello stock di carbonio.")
+        print(f"\n[STOP] Stopped after Step 04. "
+              f"Step 05 requires the carbon stock change data.")
         return {
             "01_extract":        out01,
             "02_matching":       out02,

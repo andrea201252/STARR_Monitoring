@@ -204,7 +204,7 @@ WRB_TO_TEXTURE = {
 # Se compaiono nel donor vengono rimossi in Step 02; la diagnostica li segnala
 # come "esclusi (attesi)" e NON come codici da aggiungere a WRB_TO_TEXTURE.
 WRB_NONDONOR_CODES = {
-    12: "Glaciers", 16: "Islands", 31: "Technosols(antropico)",
+    12: "Glaciers", 16: "Islands", 31: "Technosols(anthropic)",
     34: "OpenWater", 35: "NoData",
 }
 
@@ -220,13 +220,13 @@ TEXTURE_FALLBACK = {
 # ── IO ────────────────────────────────────────────────────────────────
 
 def format_int_or_all(v):
-    return "tutti" if v is None else f"{int(v):,}"
+    return "all" if v is None else f"{int(v):,}"
 
 
 def load_df(path):
     p = Path(path)
     if not p.exists():
-        raise FileNotFoundError(f"File non trovato: {p}")
+        raise FileNotFoundError(f"File not found: {p}")
     if p.suffix.lower() == ".parquet":
         return pd.read_parquet(p)
     return pd.read_csv(p)
@@ -237,9 +237,9 @@ def find_file(base_dirs, stem, fmt="parquet"):
         for ext in [fmt, "parquet", "csv"]:
             p = Path(base) / f"{stem}.{ext}"
             if p.exists():
-                print(f"    Trovato: {p.name}")
+                print(f"    Found: {p.name}")
                 return p
-    raise FileNotFoundError(f"'{stem}' non trovato in {[str(b) for b in base_dirs]}")
+    raise FileNotFoundError(f"'{stem}' not found in {[str(b) for b in base_dirs]}")
 
 
 def wrb_to_texture(code):
@@ -252,7 +252,7 @@ def wrb_to_texture(code):
 def assign_texture(df):
     df = df.copy()
     if "WRB2_CODE" not in df.columns:
-        raise ValueError("WRB2_CODE mancante. Verificare raster GEE Step 01.")
+        raise ValueError("WRB2_CODE missing. Check GEE raster Step 01.")
     df["texture_class"] = df["WRB2_CODE"].apply(wrb_to_texture)
     before = len(df)
     # Diagnostica: quali WRB2_CODE restano non mappati in WRB_TO_TEXTURE
@@ -260,7 +260,7 @@ def assign_texture(df):
     # di far propagare l'errore a valle come "Donor vuoto dopo prefiltro".
     unmapped = df.loc[df["texture_class"].isna(), "WRB2_CODE"]
     df = df[df["texture_class"].notna()].reset_index(drop=True)
-    print(f"    Filtro WRB: {before:,} → {len(df):,} px validi")
+    print(f"    WRB filter: {before:,} → {len(df):,} valid px")
     if len(unmapped) > 0:
         vc = unmapped.round().astype("Int64").value_counts().sort_values(ascending=False)
         frac = len(unmapped) / max(before, 1) * 100
@@ -269,25 +269,25 @@ def assign_texture(df):
         known = [(c, n) for c, n in vc.items() if int(c) in WRB_NONDONOR_CODES]
         other = [(c, n) for c, n in vc.items() if int(c) not in WRB_NONDONOR_CODES]
         if known:
-            kk = ", ".join(f"{WRB_NONDONOR_CODES[int(c)]}(cod{int(c)})×{int(n):,}"
+            kk = ", ".join(f"{WRB_NONDONOR_CODES[int(c)]}(code{int(c)})×{int(n):,}"
                            for c, n in known)
-            print(f"    WRB2_CODE non-donor esclusi (attesi, {frac:.2f}%): {kk}")
+            print(f"    WRB2_CODE non-donor excluded (expected, {frac:.2f}%): {kk}")
         if other:
-            oo = ", ".join(f"cod{int(c)}×{int(n):,}" for c, n in other)
-            print(f"    ⚠ WRB2_CODE INATTESI non mappati: {oo}")
-            print(f"      → se sono suoli reali, aggiungerli a WRB_TO_TEXTURE.")
+            oo = ", ".join(f"code{int(c)}×{int(n):,}" for c, n in other)
+            print(f"    ⚠ UNEXPECTED WRB2_CODE not mapped: {oo}")
+            print(f"      → if they are real soils, add them to WRB_TO_TEXTURE.")
     if len(df) == 0:
         raise RuntimeError(
-            "Nessun pixel valido dopo filtro WRB: tutti i WRB2_CODE sono fuori "
-            "da WRB_TO_TEXTURE. Vedi i codici non mappati elencati sopra e "
-            "aggiungili alla tabella WRB_TO_TEXTURE.")
+            "No valid pixel after WRB filter: all WRB2_CODE are outside "
+            "WRB_TO_TEXTURE. See the unmapped codes listed above and "
+            "add them to the WRB_TO_TEXTURE table.")
     return df
 
 
 def check_cols(df, cols, name):
     missing = [c for c in cols if c not in df.columns]
     if missing:
-        raise ValueError(f"{name}: colonne mancanti: {missing}")
+        raise ValueError(f"{name}: missing columns: {missing}")
 
 
 def drop_invalid_covariate_rows(df, name, verbose=True):
@@ -309,8 +309,8 @@ def drop_invalid_covariate_rows(df, name, verbose=True):
     out   = df[keep].reset_index(drop=True)
     n_rem = n0 - len(out)
     if verbose and n_rem > 0:
-        print(f"    Outlier/nodata {name}: {n_rem:,} righe rimosse "
-              f"(SOC<=0 o NDVI fuori [-1,1]) → {len(out):,}")
+        print(f"    Outlier/nodata {name}: {n_rem:,} rows removed "
+              f"(SOC<=0 or NDVI outside [-1,1]) → {len(out):,}")
     return out
 
 
@@ -343,9 +343,9 @@ def auto_prefilter_donor(proj_df, donor_df, cont_covs):
         lo, hi = q01 - buf, q99 + buf
         before = len(out)
         out = out[(out[col] >= lo) & (out[col] <= hi)]
-        print(f"    Prefiltro {col:18s}: [{lo:.3f}, {hi:.3f}] {before:,} → {len(out):,}")
+        print(f"    Prefilter {col:18s}: [{lo:.3f}, {hi:.3f}] {before:,} → {len(out):,}")
         if len(out) == 0:
-            raise RuntimeError(f"Donor vuoto dopo prefiltro '{col}'.")
+            raise RuntimeError(f"Donor empty after prefilter '{col}'.")
     return out.reset_index(drop=True)
 
 
@@ -510,16 +510,16 @@ def validate_mandatory_calipers(proj_df, donor_df):
     missing_donor = [c for c in MANDATORY_CALIPER_COLUMNS if not _ok(donor_df, c)]
     if missing_proj or missing_donor:
         raise RuntimeError(
-            "STEP 02 bloccato: bande caliper obbligatorie mancanti "
+            "STEP 02 blocked: mandatory caliper bands missing "
             "(GS STARR Annex 1 Table A.3).\n"
-            f"  Mancanti in project_df : {missing_proj}\n"
-            f"  Mancanti in donor_df   : {missing_donor}\n"
-            "Queste colonne sono richieste per i hard caliper. Esportarle da GEE "
-            "in Step 01, oppure (solo con giustificazione documentata nel PDD) "
-            "rimuovere la banda da MANDATORY_CALIPER_COLUMNS o impostare "
+            f"  Missing in project_df : {missing_proj}\n"
+            f"  Missing in donor_df   : {missing_donor}\n"
+            "These columns are required for the hard calipers. Export them from GEE "
+            "in Step 01, or (only with justification documented in the PDD) "
+            "remove the band from MANDATORY_CALIPER_COLUMNS or set "
             "REQUIRE_MANDATORY_CALIPERS=False.\n"
-            "NB: NDVI_t0 in particolare NON è generato da Step 01: deve essere "
-            "esportato direttamente dal raster GEE."
+            "NB: NDVI_t0 in particular is NOT generated by Step 01: it must be "
+            "exported directly from the GEE raster."
         )
 
 
@@ -537,7 +537,7 @@ def stratified_donor_cap(donor_df, sample_n, strat_col="texture_class", seed=42)
     sample_n = int(sample_n)
 
     if strat_col not in donor_df.columns:
-        print(f"    WARN: '{strat_col}' assente — cap donor casuale (non stratificato).")
+        print(f"    WARN: '{strat_col}' absent — random donor cap (not stratified).")
         return donor_df.sample(sample_n, random_state=seed).reset_index(drop=True)
 
     rng = np.random.default_rng(seed)
@@ -553,7 +553,7 @@ def stratified_donor_cap(donor_df, sample_n, strat_col="texture_class", seed=42)
     # ribilancia se l'arrotondamento ha superato/mancato il target
     if len(out) > sample_n:
         out = out.sample(sample_n, random_state=seed).reset_index(drop=True)
-    print(f"    Cap donor STRATIFICATO per {strat_col}: "
+    print(f"    STRATIFIED donor cap by {strat_col}: "
           f"{n_total:,} → {len(out):,} (target {sample_n:,})")
     return out
 
@@ -586,9 +586,9 @@ def run_matching(proj_df, donor_df, weights_dict, cont_covs, meta):
     _ndvi_mean = float(proj_df["NDVI_t0"].mean()) if "NDVI_t0" in proj_df.columns else np.nan
     if not np.isfinite(_soc_mean) or not np.isfinite(_ndvi_mean):
         raise RuntimeError(
-            "Caliper tolerance non calcolabile: media PA NaN per "
-            f"SOC_g_kg ({_soc_mean}) o NDVI_t0 ({_ndvi_mean}). "
-            "Le bande caliper sono presenti ma prive di valori validi nella PA."
+            "Caliper tolerance not computable: PA mean NaN for "
+            f"SOC_g_kg ({_soc_mean}) or NDVI_t0 ({_ndvi_mean}). "
+            "The caliper bands are present but have no valid values in the PA."
         )
     ctx["soc_tol"]  = max(abs(_soc_mean)  * CALIPER_SOC_FRAC_OF_PROJECT_MEAN, 1e-9)
     ctx["ndvi_tol"] = max(abs(_ndvi_mean) * CALIPER_NDVI_T0_FRAC_OF_PROJECT_MEAN, 1e-9)
@@ -601,13 +601,13 @@ def run_matching(proj_df, donor_df, weights_dict, cont_covs, meta):
     else:
         ctx["elev_tol"] = CALIPER_ELEVATION_M
 
-    print("    Hard calipers attivi (tutti obbligatori presenti):")
-    print(f"      texture esatta: YES")
-    print(f"      tenure esatta : {'YES ('+tenure_col+')' if tenure_col else 'N/A (opzionale)'}")
+    print("    Active hard calipers (all mandatory present):")
+    print(f"      exact texture : YES")
+    print(f"      exact tenure  : {'YES ('+tenure_col+')' if tenure_col else 'N/A (optional)'}")
     print(f"      SOC           : ±{ctx['soc_tol']:.4f}")
     print(f"      NDVI_t0       : ±{ctx['ndvi_tol']:.4f}")
     print(f"      elevation     : ±{ctx['elev_tol']:.1f} m"
-          + (f"  (adattivo: sd_PA={_elev_std:.1f} m × {CALIPER_ELEVATION_SD_MULT:.0f}, "
+          + (f"  (adaptive: sd_PA={_elev_std:.1f} m × {CALIPER_ELEVATION_SD_MULT:.0f}, "
              f"max {CALIPER_ELEVATION_M:.0f})"
              if CALIPER_ELEVATION_ADAPTIVE and np.isfinite(_elev_std) else ""))
     print(f"      slope         : ±{CALIPER_SLOPE_DEG:.0f}°")
@@ -656,15 +656,15 @@ def run_matching(proj_df, donor_df, weights_dict, cont_covs, meta):
         algorithm="ball_tree", leaf_size=KNN_LEAF_SIZE, n_jobs=KNN_N_JOBS
     )
     knn_global.fit(zdw)
-    print(f"    KNN globale: {len(zdw):,} donor | k={k_global} | n_jobs={KNN_N_JOBS}")
-    print(f"    FIX RAM: zp_w on-the-fly per batch di {KNN_BATCH_SIZE} px (mai 106K in memoria)")
+    print(f"    Global KNN: {len(zdw):,} donor | k={k_global} | n_jobs={KNN_N_JOBS}")
+    print(f"    RAM FIX: zp_w on-the-fly per batch of {KNN_BATCH_SIZE} px (never 106K in memory)")
 
     donor_df   = donor_df.reset_index(drop=True)
     donor_arr  = _build_donor_arrays(donor_df, cont_covs, tenure_col, ctx)
     donor_reuse = np.zeros(len(donor_df), dtype=np.int32)
 
     available_set = set(donor_df["texture_class"].dropna().unique())
-    print(f"    Gruppi texture donor: {sorted(available_set)}")
+    print(f"    Donor texture groups: {sorted(available_set)}")
 
     records, tex_rows, unmatched_rows = [], [], []
     run_id   = meta.get("run_id", "")
@@ -682,7 +682,7 @@ def run_matching(proj_df, donor_df, weights_dict, cont_covs, meta):
             allowed, exact = [], False
 
         if not allowed:
-            print(f"    SKIP texture '{texture}': nessun donor.")
+            print(f"    SKIP texture '{texture}': no donor.")
             for pi in proj_idx:
                 unmatched_rows.append({"proj_idx": int(pi), "proj_texture": str(texture),
                                        "reason": "no_texture_donor"})
@@ -829,7 +829,7 @@ def compute_smd(proj_df, ref_df, covs):
                      "ref_mean":  round(float(r.mean()), 6),
                      "passed":    bool(smd < SMD_THRESHOLD)})
     if not rows:
-        raise RuntimeError("Nessuna covariata valida per SMD.")
+        raise RuntimeError("No valid covariate for SMD.")
     return pd.DataFrame(rows).set_index("covariate")
 
 
@@ -857,17 +857,17 @@ def plot_rf_weights(imp_df, out_dir=None):
     ax.barh(imp_df["covariate"], imp_df["rf_importance"],
             color=plt.cm.RdYlGn(imp_df["rf_importance"]/max_imp))
     ax.axvline(imp_df["rf_importance"].mean(), color="gray", ls="--", alpha=0.7)
-    ax.set(xlabel="Importanza feature RF",
-           title="Importanza feature\ndiscriminazione progetto vs donor")
+    ax.set(xlabel="RF feature importance",
+           title="Feature importance\nproject vs donor discrimination")
     ax.grid(axis="x", alpha=0.3)
 
     ax = axes[1]
     s = imp_df.sort_values("knn_weight")
     ax.barh(s["covariate"], s["knn_weight"],
             color=plt.cm.RdYlGn(s["knn_weight"]/max_w))
-    ax.axvline(1.0, color="black", ls=":", alpha=0.4, label="w=1 (neutro)")
-    ax.set(xlabel="Peso KNN (data-driven)",
-           title="Pesi Mahalanobis data-driven")
+    ax.axvline(1.0, color="black", ls=":", alpha=0.4, label="w=1 (neutral)")
+    ax.set(xlabel="KNN weight (data-driven)",
+           title="Data-driven Mahalanobis weights")
     ax.legend(fontsize=8); ax.grid(axis="x", alpha=0.3)
     plt.tight_layout()
     if out_dir:
@@ -875,14 +875,28 @@ def plot_rf_weights(imp_df, out_dir=None):
     return fig
 
 
-def plot_smd(smd_df, out_dir=None, filename="SMD_lollipop.png", title="Bilanciamento covariate"):
+def plot_smd(smd_df, out_dir=None, filename="SMD_lollipop.png", title="Covariate balance"):
+    from matplotlib.lines import Line2D
     fig, ax = plt.subplots(figsize=(9, max(4, len(smd_df)*0.35)))
-    colors = ["#d62728" if not p else "#2ca02c" for p in smd_df["passed"]]
+    c_pass, c_fail = "#2ca02c", "#d62728"
+    colors = [c_fail if not p else c_pass for p in smd_df["passed"]]
     ax.hlines(smd_df.index, 0, smd_df["SMD"].fillna(0).values, lw=2, color=colors)
     ax.scatter(smd_df["SMD"].fillna(0).values, smd_df.index, s=70, color=colors, zorder=5)
-    ax.axvline(SMD_THRESHOLD, color="black", ls="--", label=f"SMD={SMD_THRESHOLD}")
-    ax.set(xlabel="SMD (GS STARR: < 0.1)", title=title)
-    ax.legend(fontsize=8); ax.grid(axis="x", alpha=0.3)
+    ax.axvline(SMD_THRESHOLD, color="black", ls="--", lw=1.5)
+    # Explicit legend: what each dot/colour means + the labelled threshold line
+    legend_handles = [
+        Line2D([0], [0], marker="o", color="w", markerfacecolor=c_pass, markersize=9,
+               label=f"PASS  (SMD < {SMD_THRESHOLD})"),
+        Line2D([0], [0], marker="o", color="w", markerfacecolor=c_fail, markersize=9,
+               label=f"FAIL  (SMD ≥ {SMD_THRESHOLD})"),
+        Line2D([0], [0], color="black", ls="--", lw=1.5,
+               label=f"Balance threshold = {SMD_THRESHOLD}"),
+    ]
+    ax.legend(handles=legend_handles, fontsize=8, loc="best", framealpha=0.9)
+    ax.set(xlabel="Standardized Mean Difference (SMD)  —  GS STARR target < 0.1",
+           ylabel="Covariate",
+           title=title)
+    ax.grid(axis="x", alpha=0.3)
     plt.tight_layout()
     if out_dir:
         fig.savefig(Path(out_dir) / filename, dpi=150, bbox_inches="tight")
@@ -892,13 +906,16 @@ def plot_smd(smd_df, out_dir=None, filename="SMD_lollipop.png", title="Bilanciam
 def plot_match_distances(matched_df, out_dir=None):
     fig, ax = plt.subplots(figsize=(7, 4))
     d = matched_df["match_distance"].astype(float).values
-    ax.hist(d, bins=60, edgecolor="white", color="#4C72B0")
-    ax.axvline(d.mean(), color="red", ls="--", label=f"Media={d.mean():.3f}")
-    ax.axvline(np.percentile(d, 95), color="orange", ls=":",
-               label=f"P95={np.percentile(d,95):.3f}")
-    ax.set(xlabel="Distanza Mahalanobis whitened", ylabel="Pixel",
-           title="Distribuzione distanze di match")
-    ax.legend(); ax.grid(alpha=0.3)
+    ax.hist(d, bins=60, edgecolor="white", color="#4C72B0",
+            label="Matched pixels (project → reference)")
+    ax.axvline(d.mean(), color="red", ls="--", lw=1.5,
+               label=f"Mean = {d.mean():.3f}")
+    ax.axvline(np.percentile(d, 95), color="orange", ls=":", lw=1.5,
+               label=f"P95 = {np.percentile(d,95):.3f}")
+    ax.set(xlabel="Whitened Mahalanobis distance (lower = closer match)",
+           ylabel="Number of pixels",
+           title="Match distance distribution")
+    ax.legend(fontsize=8, framealpha=0.9); ax.grid(alpha=0.3)
     plt.tight_layout()
     if out_dir:
         fig.savefig(Path(out_dir) / "match_distance_distribution.png", dpi=150, bbox_inches="tight")
@@ -914,8 +931,8 @@ def run_matching_step(base_dirs=None, output_dir=None,
     """
     if base_dirs is None:
         raise RuntimeError(
-            "base_dirs non fornito. Passare base_dirs=[out01] dal runner "
-            "oppure specificare la directory di output dello Step 01."
+            "base_dirs not provided. Pass base_dirs=[out01] from the runner "
+            "or specify the Step 01 output directory."
         )
     base_dirs = [Path(b) for b in base_dirs]
     out_dir   = Path(output_dir) if output_dir else base_dirs[0].parent / "02_matching"
@@ -924,7 +941,7 @@ def run_matching_step(base_dirs=None, output_dir=None,
     if verbose:
         print(f"\n{'='*60}")
         print(f"STEP 02 — Matching | K={K_NEIGHBOURS} | "
-              f"candidati={KNN_QUERY_CANDIDATES} | N_donor={format_int_or_all(N_DONOR_SAMPLE)}")
+              f"candidates={KNN_QUERY_CANDIDATES} | N_donor={format_int_or_all(N_DONOR_SAMPLE)}")
         print(f"Output: {out_dir}")
         print(f"{'='*60}")
 
@@ -941,16 +958,16 @@ def run_matching_step(base_dirs=None, output_dir=None,
                  and c not in EXCLUDE_COVARIATES_FROM_MATCHING
                  and not c.startswith("precip_bin")]
     if not cont_covs:
-        raise RuntimeError("continuous_covariates vuoto. Eseguire Step 01.")
+        raise RuntimeError("continuous_covariates empty. Run Step 01.")
     if EXCLUDE_COVARIATES_FROM_MATCHING:
         _excl = [c for c in EXCLUDE_COVARIATES_FROM_MATCHING
                  if c in (meta.get("continuous_covariates") or [])]
         if _excl:
-            print(f"    Covariate ESCLUSE dal matching (config): {_excl}")
+            print(f"    Covariates EXCLUDED from matching (config): {_excl}")
 
     ndvi_year_cols = meta.get("ndvi_year_cols") or detect_ndvi_year_cols(proj_df.columns)
-    print(f"    Covariate Mahalanobis: {cont_covs}")
-    print(f"    NDVI annuali: {ndvi_year_cols}")
+    print(f"    Mahalanobis covariates: {cont_covs}")
+    print(f"    Annual NDVI: {ndvi_year_cols}")
 
     check_cols(proj_df,  cont_covs + ["WRB2_CODE", "lon", "lat"], "project_df")
     check_cols(donor_df, cont_covs + ["WRB2_CODE", "lon", "lat"], "donor_df")
@@ -964,25 +981,25 @@ def run_matching_step(base_dirs=None, output_dir=None,
     proj_df  = proj_df.dropna(subset=cont_covs).reset_index(drop=True)
     donor_df = donor_df.dropna(subset=cont_covs).reset_index(drop=True)
     # Rimozione outlier/nodata fisicamente non validi (SOC<=0, NDVI fuori range)
-    proj_df  = drop_invalid_covariate_rows(proj_df,  "PROGETTO")
+    proj_df  = drop_invalid_covariate_rows(proj_df,  "PROJECT")
     donor_df = drop_invalid_covariate_rows(donor_df, "DONOR")
-    print(f"    Progetto: {len(proj_df):,} | Donor: {len(donor_df):,}")
+    print(f"    Project: {len(proj_df):,} | Donor: {len(donor_df):,}")
     if len(proj_df) == 0 or len(donor_df) == 0:
-        raise RuntimeError("Dataset vuoto dopo dropna/outlier covariate.")
+        raise RuntimeError("Empty dataset after dropna/covariate outlier removal.")
 
-    print("\n[2] Prefiltro donor (largo)...")
+    print("\n[2] Donor prefilter (wide)...")
     donor_df = auto_prefilter_donor(proj_df, donor_df, cont_covs)
 
     weights_dict = {c: 1.0 for c in cont_covs}  # plain Mahalanobis: pesi uniformi (no RF)
     imp_df = None
 
-    print("\n[3] Matching KNN plain Mahalanobis + hard calipers (a batch, senza RF)...")
+    print("\n[3] KNN plain Mahalanobis matching + hard calipers (batched, without RF)...")
     matched_df, tex_summary, unmatched_df = run_matching(
         proj_df, donor_df, weights_dict, cont_covs, meta)
 
     if matched_df.empty:
-        raise RuntimeError("Nessun pixel matchato dopo hard calipers. "
-                           "Aumentare KNN_QUERY_CANDIDATES o abilitare ALLOW_TEXTURE_FALLBACK.")
+        raise RuntimeError("No pixel matched after hard calipers. "
+                           "Increase KNN_QUERY_CANDIDATES or enable ALLOW_TEXTURE_FALLBACK.")
 
     n_matched  = len(matched_df)
     n_unique   = matched_df[["ref_lon","ref_lat"]].drop_duplicates().shape[0]
@@ -990,11 +1007,11 @@ def run_matching_step(base_dirs=None, output_dir=None,
     reuse_n    = int(matched_df.get("reuse_exceeded", pd.Series(dtype=bool)).sum()) \
                  if "reuse_exceeded" in matched_df.columns else 0
 
-    print(f"\n    Matchati  : {n_matched:,}")
-    print(f"    Non match.: {n_unmatch:,}")
-    print(f"    Ref unici : {n_unique:,}")
+    print(f"\n    Matched   : {n_matched:,}")
+    print(f"    Unmatched : {n_unmatch:,}")
+    print(f"    Unique ref: {n_unique:,}")
 
-    print(f"\n[5] Validazione SMD (< {SMD_THRESHOLD})...")
+    print(f"\n[5] SMD validation (< {SMD_THRESHOLD})...")
     smd_df = compute_smd(proj_df, matched_df, cont_covs)
     for cov, row in smd_df.iterrows():
         print(f"    {'PASS' if row['passed'] else 'FAIL':4s} {cov:20s}: SMD={row['SMD']:.4f}")
@@ -1008,8 +1025,8 @@ def run_matching_step(base_dirs=None, output_dir=None,
 
     caliper_audit = compute_caliper_audit(matched_df)
 
-    print("\n[6] Plot + salvataggio...")
-    fig_s = plot_smd(smd_df, out_dir, "SMD_lollipop.png", "Bilanciamento covariate obbligatorie")
+    print("\n[6] Plot + saving...")
+    fig_s = plot_smd(smd_df, out_dir, "SMD_lollipop.png", "Mandatory covariate balance")
     fig_d = plot_match_distances(matched_df, out_dir)
     # fig_n = plot_smd(ndvi_smd_df, out_dir, "SMD_annual_NDVI.png",
                     #  "Bilanciamento NDVI annuale") if not ndvi_smd_df.empty else None
@@ -1027,12 +1044,12 @@ def run_matching_step(base_dirs=None, output_dir=None,
     summary = {
         "run_id":                meta.get("run_id",""),
         "timestamp_utc":         datetime.now(timezone.utc).isoformat(),
-        "matching_method":       "Plain Mahalanobis KNN a batch on-the-fly (senza pesi RF)",
-        "donor_pool_rule":       "Non-Forest a T0, >5km dalla PA (GEE Annex A.2.2 Step A)",
+        "matching_method":       "Plain Mahalanobis KNN, on-the-fly batches (no RF weights)",
+        "donor_pool_rule":       "Non-Forest at T0, >5km from the PA (GEE Annex A.2.2 Step A)",
         "donor_cap_method":      "stratified_by_texture_class" if N_DONOR_SAMPLE is not None else "no_cap",
-        "donor_loading_note":    ("Donor caricato interamente in RAM da parquet, poi cap "
-                                  "stratificato per texture. NON è streaming a batch "
-                                  "(il commento del runner era impreciso)."),
+        "donor_loading_note":    ("Donor fully loaded in RAM from parquet, then "
+                                  "stratified cap by texture. It is NOT batch streaming "
+                                  "(the runner comment was inaccurate)."),
         "mandatory_calipers_enforced": bool(REQUIRE_MANDATORY_CALIPERS),
         "mandatory_caliper_columns":   list(MANDATORY_CALIPER_COLUMNS),
         "k_neighbours":          int(K_NEIGHBOURS),
@@ -1058,8 +1075,8 @@ def run_matching_step(base_dirs=None, output_dir=None,
 
     if verbose:
         print(f"\n{'='*60}")
-        print(f"  Matchati         : {n_matched:,}")
-        print(f"  Non matchati     : {n_unmatch:,}")
+        print(f"  Matched          : {n_matched:,}")
+        print(f"  Unmatched        : {n_unmatch:,}")
         print(f"  SMD max          : {smd_df['SMD'].max():.4f}")
         # if not ndvi_smd_df.empty:
         #     print(f"  NDVI SMD max     : {ndvi_smd_df['SMD'].max():.4f}")

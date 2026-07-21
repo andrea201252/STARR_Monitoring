@@ -14,8 +14,8 @@ import json, time, traceback
 from pathlib import Path
 import pandas as pd
 
-assert s05 is not None, "Script Step 05 non caricato (s05 is None)."
-assert 'twin_pixels' in globals(), "twin_pixels mancante: esegui prima Step 01-04."
+assert s05 is not None, "Step 05 script not loaded (s05 is None)."
+assert 'twin_pixels' in globals(), "twin_pixels missing: run Step 01-04 first."
 
 # Risolvi manifest/area come nella cella §7
 _manifest = globals().get('manifest', None)
@@ -24,7 +24,7 @@ if _manifest is None:
     _manifest = json.load(open(_mpath)) if _mpath.exists() else None
 _area_ha = float(globals().get('PROJECT_AREA_HA_RESOLVED',
                                 globals().get('PROJECT_AREA_HA', 0.0)))
-assert _area_ha > 0, "PROJECT_AREA_HA non risolta (>0)."
+assert _area_ha > 0, "PROJECT_AREA_HA not resolved (>0)."
 
 # ── Override espliciti richiesti ─────────────────────────────────────
 s05.ALLOW_NEGATIVE_BASELINE = True       # baseline anche sotto zero (PM)
@@ -129,7 +129,7 @@ for src_key, cfg in AGB_SOURCES.items():
         missing = [p for p in paths if not Path(p).exists()]
         if missing:
             skipped.append({'run': tag, 'missing': missing})
-            print(f'[{n_done}/{n_total}] SKIP {tag} — file mancanti: {len(missing)}')
+            print(f'[{n_done}/{n_total}] SKIP {tag} — missing files: {len(missing)}')
             continue
 
         if DRY_RUN:
@@ -178,16 +178,16 @@ if rows:
     master = pd.DataFrame(rows).sort_values('surplus_tCO2e_period', ascending=False)
     master.to_csv(BATCH_DIR / 'comparison_master.csv', index=False)
     master.to_json(BATCH_DIR / 'comparison_master.json', orient='records', indent=2)
-    print(f'\nMaster salvato: {BATCH_DIR / "comparison_master.csv"}  ({len(master)} run)')
+    print(f'\nMaster saved: {BATCH_DIR / "comparison_master.csv"}  ({len(master)} run)')
     display(master)
 else:
-    print('\nNessun run completato. Controlla skipped/errors qui sotto.')
+    print('\nNo run completed. Check skipped/errors below.')
 
 if skipped:
-    print(f'\n{len(skipped)} run saltati (file mancanti):')
+    print(f'\n{len(skipped)} runs skipped (missing files):')
     for s in skipped: print('  -', s['run'])
 if errors:
-    print(f'\n{len(errors)} run con errore:')
+    print(f'\n{len(errors)} runs with error:')
     for e in errors: print('  -', e['run'], '::', e['error'][:80])
 
 with open(BATCH_DIR / 'batch_log.json', 'w') as f:

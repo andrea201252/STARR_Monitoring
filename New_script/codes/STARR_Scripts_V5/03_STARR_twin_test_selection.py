@@ -61,7 +61,7 @@ GRID_SEED             = 42
 
 def load_df(path):
     p = Path(path)
-    if not p.exists(): raise FileNotFoundError(f"File non trovato: {p}")
+    if not p.exists(): raise FileNotFoundError(f"File not found: {p}")
     return pd.read_parquet(p) if p.suffix.lower()==".parquet" else pd.read_csv(p)
 
 def find_file(base_dirs, stem):
@@ -69,8 +69,8 @@ def find_file(base_dirs, stem):
         base = Path(base)
         for ext in ["parquet","csv"]:
             p = base/f"{stem}.{ext}"
-            if p.exists(): print(f"    Trovato: {p.name}"); return p
-    raise FileNotFoundError(f"'{stem}' non trovato in {base_dirs}")
+            if p.exists(): print(f"    Found: {p.name}"); return p
+    raise FileNotFoundError(f"'{stem}' not found in {base_dirs}")
 
 def detect_ndvi_year_cols(columns):
     import re
@@ -249,7 +249,7 @@ def compute_pair_slopes(df, ndvi_year_cols, year_list, min_valid):
     ref_cols  = [f"ref_{c}"  for c in ndvi_year_cols]
     proj_cols = [f"proj_{c}" for c in ndvi_year_cols]
     missing   = [c for c in ref_cols+proj_cols if c not in df.columns]
-    if missing: raise ValueError(f"Colonne NDVI mancanti: {missing}")
+    if missing: raise ValueError(f"Missing NDVI columns: {missing}")
 
     refY  = df[ref_cols].to_numpy(dtype=np.float64)
     projY = df[proj_cols].to_numpy(dtype=np.float64)
@@ -360,8 +360,8 @@ def plot_parallel_trends(result_df, passed_df, ndvi_year_cols, out_dir=None):
             d = summary[(summary["set"]==label)&(summary["group"]==group)]
             ax.errorbar(d["year"],d["mean_ndvi"],yerr=d["se"],marker=marker,
                         linestyle=ls,alpha=alpha,label=f"{group} - {label}")
-    ax.set_xlabel("Anno"); ax.set_ylabel("NDVI medio")
-    ax.set_title("Trend parallelo: NDVI medio Project vs Reference")
+    ax.set_xlabel("Year"); ax.set_ylabel("Mean NDVI")
+    ax.set_title("Parallel trend: mean NDVI Project vs Reference")
     ax.grid(alpha=0.3); ax.legend(fontsize=8); plt.tight_layout()
     if out_dir:
         fig.savefig(Path(out_dir)/"parallel_trends_mean_ndvi.png",dpi=150,bbox_inches="tight")
@@ -373,14 +373,14 @@ def plot_paired_slope_scatter(result_df, passed_df, out_dir=None):
     fig, ax = plt.subplots(figsize=(6,6))
     failed = result_df.loc[(~result_df.get("twin_pass",pd.Series(False,index=result_df.index)).astype(bool))
                             & result_df["ols_valid"]]
-    ax.scatter(failed["proj_slope"],failed["ref_slope"],s=8,alpha=0.25,label=f"Esclusi ({len(failed):,})")
-    ax.scatter(passed_df["proj_slope"],passed_df["ref_slope"],s=10,alpha=0.65,label=f"Selezionati ({len(passed_df):,})")
+    ax.scatter(failed["proj_slope"],failed["ref_slope"],s=8,alpha=0.25,label=f"Excluded ({len(failed):,})")
+    ax.scatter(passed_df["proj_slope"],passed_df["ref_slope"],s=10,alpha=0.65,label=f"Selected — passed parallel test ({len(passed_df):,})")
     vals = pd.concat([result_df["proj_slope"],result_df["ref_slope"]]).dropna()
     lim  = max(float(vals.abs().quantile(0.99)*1.1) if len(vals) else 0, PAIR_SLOPE_DIFF_MAX*2)
-    ax.plot([-lim,lim],[-lim,lim],"k--",lw=0.8,alpha=0.5,label="1:1")
+    ax.plot([-lim,lim],[-lim,lim],"k--",lw=0.8,alpha=0.5,label="1:1 parallel")
     ax.set_xlim(-lim,lim); ax.set_ylim(-lim,lim)
-    ax.set_xlabel("Pendenza NDVI progetto"); ax.set_ylabel("Pendenza NDVI reference")
-    ax.set_title("Confronto pendenza appaiata"); ax.grid(alpha=0.3); ax.legend(fontsize=8)
+    ax.set_xlabel("Project NDVI slope"); ax.set_ylabel("Reference NDVI slope")
+    ax.set_title("Paired slope comparison"); ax.grid(alpha=0.3); ax.legend(fontsize=8)
     plt.tight_layout()
     if out_dir: fig.savefig(Path(out_dir)/"paired_slope_scatter.png",dpi=150,bbox_inches="tight")
     return fig
@@ -399,13 +399,14 @@ def plot_example_grid(passed_df, ndvi_year_cols, out_dir=None, n=None):
         ax = axes[i]
         p = [row.get(f"proj_{c}",np.nan) for c in ndvi_year_cols]
         r = [row.get(f"ref_{c}", np.nan) for c in ndvi_year_cols]
-        ax.plot(years,p,"o-",lw=1,markersize=4,label="Progetto")
+        ax.plot(years,p,"o-",lw=1,markersize=4,label="Project")
         ax.plot(years,r,"s--",lw=1,markersize=4,label="Reference")
         ax.set_title(f"|Δslope|={row.get('slope_diff',np.nan):.4f}",fontsize=7)
         ax.tick_params(labelsize=6); ax.grid(alpha=0.2)
         if i==0: ax.legend(fontsize=6)
     for j in range(len(sample),len(axes)): axes[j].axis("off")
-    plt.tight_layout()
+    fig.suptitle("Parallel-selected pairs: Project vs Reference NDVI", fontsize=10)
+    plt.tight_layout(rect=[0,0,1,0.97])
     if out_dir: fig.savefig(Path(out_dir)/"twin_test_examples_grid.png",dpi=150,bbox_inches="tight")
     return fig
 
@@ -416,7 +417,7 @@ def plot_example_grid(passed_df, ndvi_year_cols, out_dir=None, n=None):
 
 def run_twin_test(base_dirs=None, output_dir=None, matched_df=None,
                    proj_df=None, meta=None, verbose=True):
-    if base_dirs is None: raise RuntimeError("base_dirs non fornito.")
+    if base_dirs is None: raise RuntimeError("base_dirs not provided.")
     base_dirs = [Path(b) for b in base_dirs]
     out_dir   = Path(output_dir) if output_dir else base_dirs[0].parent/"03_twin_test"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -444,15 +445,15 @@ def run_twin_test(base_dirs=None, output_dir=None, matched_df=None,
               f"min_valid={min_valid}/{len(year_list)}")
         print(f"Output: {out_dir}\n{'='*60}")
 
-    print("\n[1] Aggancio NDVI di progetto")
+    print("\n[1] Attach project NDVI")
     result = attach_project_ndvi(matched_df, proj_df, ndvi_year_cols)
 
-    print("[2] Pendenze delle coppie (OLS vettorizzato)")
+    print("[2] Pair slopes (vectorized OLS)")
     t0 = time.time()
     result = compute_pair_slopes(result, ndvi_year_cols, year_list, min_valid)
-    print(f"    OLS validi: {int(result['ols_valid'].sum()):,}/{len(result):,} ({time.time()-t0:.1f}s)")
+    print(f"    Valid OLS: {int(result['ols_valid'].sum()):,}/{len(result):,} ({time.time()-t0:.1f}s)")
 
-    print("[3] Test aggregati")
+    print("[3] Aggregate tests")
     all_valid       = result[result["ols_valid"]]
     all_long        = make_long_for_interaction(all_valid, ndvi_year_cols)
     all_interaction = interaction_test_from_long(all_long)
@@ -481,13 +482,13 @@ def run_twin_test(base_dirs=None, output_dir=None, matched_df=None,
           f"selected={len(passed):,}/{len(result):,} | passed={aggregate_passed}")
     if not twin_test_compliant:
         print("    " + "!" * 56)
-        print("    ATTENZIONE: il twin/parallel-trend test NON è passato.")
-        print("    I pixel selezionati sono 'best available' e NON conformi.")
-        print("    Step 04 si fermerà: vanno usati solo i pixel conformi.")
-        print("    Rivedere Step 02/03 e documentare nel PDD.")
+        print("    WARNING: the parallel-trend test did NOT pass.")
+        print("    The selected pixels are 'best available' and non-compliant.")
+        print("    Step 04 will stop: only compliant pixels must be used.")
+        print("    Review Step 02/03 and document in the PDD.")
         print("    " + "!" * 56)
 
-    print("[4] Grafici + export")
+    print("[4] Plots + export")
     fig_trend, trend_table = plot_parallel_trends(result, passed, ndvi_year_cols, out_dir)
     fig_slope = plot_paired_slope_scatter(result, passed, out_dir)
     fig_grid  = plot_example_grid(passed, ndvi_year_cols, out_dir)
@@ -500,7 +501,7 @@ def run_twin_test(base_dirs=None, output_dir=None, matched_df=None,
     report = {
         "run_id":meta.get("run_id",""),
         "timestamp_utc":datetime.now(timezone.utc).isoformat(),
-        "method":"Test aggregato di interazione su trend parallelo NDVI + test di pendenza appaiata",
+        "method":"Aggregate interaction test on NDVI parallel trend + paired slope test",
         "pvalue_threshold":PVALUE_THRESHOLD,"pair_slope_diff_max":PAIR_SLOPE_DIFF_MAX,
         "ndvi_year_cols":ndvi_year_cols,"year_list":year_list,"min_valid_years":int(min_valid),
         "input_pairs":int(len(result)),"ols_valid_pairs":int(result["ols_valid"].sum()),
@@ -513,9 +514,9 @@ def run_twin_test(base_dirs=None, output_dir=None, matched_df=None,
         "twin_test_compliant":twin_test_compliant,
         "proceed_recommended":proceed_recommended,
         "compliance_note":(
-            "Se twin_test_compliant=False i pixel selezionati sono 'best available' "
-            "e non hanno superato il parallel-trend test aggregato. Step 04 li rifiuta: "
-            "vanno usati solo i pixel conformi, non è previsto alcun override."
+            "If twin_test_compliant=False the selected pixels are 'best available' "
+            "and did not pass the aggregate parallel-trend test. Step 04 rejects them: "
+            "only compliant pixels must be used, no override is allowed."
         ),
         "next_step":"04_STARR_reference_area_lock.py",
     }
@@ -524,9 +525,9 @@ def run_twin_test(base_dirs=None, output_dir=None, matched_df=None,
 
     if verbose:
         print(f"\n{'='*60}")
-        print(f"Twin selezionati : {len(passed):,}/{len(result):,}")
-        print(f"Aggregato OK     : {aggregate_passed}")
-        print(f"Output           : {out_dir}\n{'='*60}")
+        print(f"Parallel-selected pairs : {len(passed):,}/{len(result):,}")
+        print(f"Aggregate OK            : {aggregate_passed}")
+        print(f"Output                  : {out_dir}\n{'='*60}")
 
     return result, passed, report, {"parallel_trends":fig_trend,"slope_scatter":fig_slope,
                                      "examples":fig_grid}, out_dir

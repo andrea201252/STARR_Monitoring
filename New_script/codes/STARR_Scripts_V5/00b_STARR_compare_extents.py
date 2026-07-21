@@ -240,9 +240,9 @@ def plot_comparison(metrics_list: list[dict],
     ax.set_xticks(x); ax.set_xticklabels(labels, fontsize=8)
     ax.yaxis.set_major_formatter(
         plt.FuncFormatter(lambda v, _: f"{int(v):,}"))
-    ax.set_title("A — Dimensione pool donor\n(verde = soddisfa 3×)",
+    ax.set_title("A — Donor pool size\n(green = meets 3×)",
                  fontsize=9, fontweight="bold")
-    ax.set_ylabel("n pixel donor", fontsize=8)
+    ax.set_ylabel("n donor pixels", fontsize=8)
     ax.legend(fontsize=7); ax.grid(axis="y", alpha=0.35, zorder=0)
     for xi, v, r in zip(x, vals, [m["ratio_donor_project"] for m in metrics_list]):
         ax.text(xi, v, f"{r:.1f}×", ha="center", va="bottom",
@@ -255,12 +255,12 @@ def plot_comparison(metrics_list: list[dict],
               for m in metrics_list]
     ax.bar(x, vals, color=colors, alpha=0.78, **bar_kw)
     ax.axhline(THRESH_MATCH_COV_PCT, color="#f5a623", ls="--", lw=1.8,
-               label=f"Soglia {THRESH_MATCH_COV_PCT:.0f}%")
+               label=f"Threshold {THRESH_MATCH_COV_PCT:.0f}%")
     ax.set_xticks(x); ax.set_xticklabels(labels, fontsize=8)
     ax.set_ylim(0, 105)
-    ax.set_title("B — Copertura match %\n(verde = ≥90%)",
+    ax.set_title("B — Match coverage %\n(green = ≥90%)",
                  fontsize=9, fontweight="bold")
-    ax.set_ylabel("% px progetto matchati", fontsize=8)
+    ax.set_ylabel("% project px matched", fontsize=8)
     ax.legend(fontsize=7); ax.grid(axis="y", alpha=0.35, zorder=0)
     for xi, v in zip(x, vals):
         ax.text(xi, v + 1, f"{v:.1f}%", ha="center", va="bottom", fontsize=7)
@@ -272,12 +272,12 @@ def plot_comparison(metrics_list: list[dict],
               for m in metrics_list]
     ax.bar(x, vals, color=colors, alpha=0.78, **bar_kw)
     ax.axhline(THRESH_TWIN_PASS_PCT, color="#f5a623", ls="--", lw=1.8,
-               label=f"Soglia {THRESH_TWIN_PASS_PCT:.0f}%")
+               label=f"Threshold {THRESH_TWIN_PASS_PCT:.0f}%")
     ax.set_xticks(x); ax.set_xticklabels(labels, fontsize=8)
     ax.set_ylim(0, 105)
-    ax.set_title("C — Twin test superato %\n(verde = ≥30%)",
+    ax.set_title("C — Parallel test passed %\n(green = ≥30%)",
                  fontsize=9, fontweight="bold")
-    ax.set_ylabel("% coppie con trend parallelo", fontsize=8)
+    ax.set_ylabel("% pairs with parallel trend", fontsize=8)
     ax.legend(fontsize=7); ax.grid(axis="y", alpha=0.35, zorder=0)
     for xi, v in zip(x, vals):
         ax.text(xi, v + 1, f"{v:.1f}%", ha="center", va="bottom", fontsize=7)
@@ -289,11 +289,11 @@ def plot_comparison(metrics_list: list[dict],
               for m in metrics_list]
     ax.bar(x, vals, color=colors, alpha=0.78, **bar_kw)
     ax.axhline(THRESH_SMD_MAX, color="#f5a623", ls="--", lw=1.8,
-               label=f"Soglia {THRESH_SMD_MAX}")
+               label=f"Threshold {THRESH_SMD_MAX}")
     ax.set_xticks(x); ax.set_xticklabels(labels, fontsize=8)
-    ax.set_title("D — SMD max\n(verde = ≤0.10)",
+    ax.set_title("D — SMD max\n(green = ≤0.10)",
                  fontsize=9, fontweight="bold")
-    ax.set_ylabel("SMD massimo covariata", fontsize=8)
+    ax.set_ylabel("Max covariate SMD", fontsize=8)
     ax.legend(fontsize=7); ax.grid(axis="y", alpha=0.35, zorder=0)
     for xi, v in zip(x, vals):
         ax.text(xi, v, f"{v:.3f}", ha="center", va="bottom", fontsize=7)
@@ -303,8 +303,8 @@ def plot_comparison(metrics_list: list[dict],
     criteria_keys = ["ratio_3x", "match_cov_90pct",
                      "twin_pass_30pct", "twin_compliant", "smd_le_010", "ALL_SUFFICIENT"]
     criteria_labels = [
-        "Ratio ≥3×", "Match ≥90%", "Twin ≥30%",
-        "Twin conf.", "SMD ≤0.10", "TUTTO OK ✓"
+        "Ratio ≥3×", "Match ≥90%", "Parallel ≥30%",
+        "Parallel conf.", "SMD ≤0.10", "ALL OK ✓"
     ]
     n_ext  = len(metrics_list)
     n_crit = len(criteria_keys)
@@ -322,7 +322,7 @@ def plot_comparison(metrics_list: list[dict],
                      ha="center", va="center", fontsize=12,
                      color="white" if heat[i, j] == 0 else "black",
                      fontweight="bold")
-    ax2.set_title("Heatmap criteri di sufficienza per extent",
+    ax2.set_title("Sufficiency criteria heatmap by extent",
                   fontsize=9, fontweight="bold")
 
     # Evidenzia extent minimo sufficiente
@@ -337,17 +337,17 @@ def plot_comparison(metrics_list: list[dict],
                                   fill=False, edgecolor="#0d47a1", lw=3))
 
     fig.suptitle(
-        f"GS STARR — Confronto Estensione Donor\n"
-        f"Progetto: {metrics_list[0]['n_project']:,} px | "
-        f"Soglie: ratio≥{THRESH_RATIO_3X}× | match≥{THRESH_MATCH_COV_PCT}% | "
-        f"twin≥{THRESH_TWIN_PASS_PCT}% | SMD≤{THRESH_SMD_MAX}",
+        f"GS STARR — Donor Extent Comparison\n"
+        f"Project: {metrics_list[0]['n_project']:,} px | "
+        f"Thresholds: ratio≥{THRESH_RATIO_3X}× | match≥{THRESH_MATCH_COV_PCT}% | "
+        f"parallel≥{THRESH_TWIN_PASS_PCT}% | SMD≤{THRESH_SMD_MAX}",
         fontsize=10, fontweight="bold")
 
     plt.tight_layout()
 
     if out_path:
         fig.savefig(out_path, dpi=150, bbox_inches="tight", facecolor="white")
-        print(f"  [00b] Plot salvato: {out_path}")
+        print(f"  [00b] Plot saved: {out_path}")
 
     return fig
 
@@ -402,7 +402,7 @@ def run_comparison(extents: list | None = None,
 
     if not base_dirs:
         raise FileNotFoundError(
-            f"Nessuna directory trovata: {BASE_DIR_CANDIDATES}")
+            f"No directory found: {BASE_DIR_CANDIDATES}")
 
     out_dir = (Path(output_dir) if output_dir
                else Path(base_dirs[0]) / "STARR_outputs" / "comparison")
@@ -411,8 +411,8 @@ def run_comparison(extents: list | None = None,
     s00 = load_module("00_STARR_run_steps_01_to_05.py", "s00")
 
     print(f"\n{'═'*65}")
-    print(f"00b — Confronto Estensione Donor")
-    print(f"Estensioni da testare : {extents}")
+    print(f"00b — Donor Extent Comparison")
+    print(f"Extents to test       : {extents}")
     print(f"Output                : {out_dir}")
     print(f"{'═'*65}\n")
 
@@ -441,14 +441,14 @@ def run_comparison(extents: list | None = None,
             all_results[lbl] = result
             metrics_list.append(m)
             ok = m["criteria"]["ALL_SUFFICIENT"]
-            print(f"  ✓ Completato in {time.time()-t0:.0f}s | "
-                  f"sufficient={'SI' if ok else 'NO'} | "
+            print(f"  ✓ Completed in {time.time()-t0:.0f}s | "
+                  f"sufficient={'YES' if ok else 'NO'} | "
                   f"ratio={m['ratio_donor_project']:.1f}× | "
                   f"match={m['match_coverage_pct']:.1f}% | "
-                  f"twin={m['twin_pass_pct']:.1f}% | "
+                  f"parallel={m['twin_pass_pct']:.1f}% | "
                   f"smd={m['smd_max']:.3f}")
         except Exception as exc:
-            print(f"  ✗ ERRORE extent={lbl}: {exc}")
+            print(f"  ✗ ERROR extent={lbl}: {exc}")
             metrics_list.append({
                 "extent_km": ext,
                 "error": str(exc),
@@ -464,9 +464,9 @@ def run_comparison(extents: list | None = None,
 
     if min_suff:
         rec = (
-            f"Extent minimo sufficiente: {_extent_label(min_suff['extent_km'])}\n"
+            f"Minimum sufficient extent: {_extent_label(min_suff['extent_km'])}\n"
             f"  n_donor        = {min_suff['n_donor']:,} "
-            f"({min_suff['ratio_donor_project']:.1f}× progetto)\n"
+            f"({min_suff['ratio_donor_project']:.1f}× project)\n"
             f"  match_coverage = {min_suff['match_coverage_pct']:.1f}%\n"
             f"  twin_pass      = {min_suff['twin_pass_pct']:.1f}%\n"
             f"  smd_max        = {min_suff['smd_max']:.3f}\n"
@@ -474,18 +474,18 @@ def run_comparison(extents: list | None = None,
         )
     else:
         rec = (
-            "NESSUN extent soddisfa tutti i criteri.\n"
-            "Azioni suggerite:\n"
-            "  1. Aumentare il buffer massimo (> 30 km)\n"
-            "  2. Verificare la qualità dei shapefile Eligible_FNF e FNF18\n"
-            "  3. Rilassare PAIR_SLOPE_DIFF_MAX in Step 03 (0.005 → 0.01)\n"
-            "  4. Verificare la copertura NDVI nel TIF donor"
+            "NO extent satisfies all criteria.\n"
+            "Suggested actions:\n"
+            "  1. Increase the maximum buffer (> 30 km)\n"
+            "  2. Check the quality of the Eligible_FNF and FNF18 shapefiles\n"
+            "  3. Relax PAIR_SLOPE_DIFF_MAX in Step 03 (0.005 → 0.01)\n"
+            "  4. Check the NDVI coverage in the donor TIF"
         )
 
     print(f"\n{'═'*65}")
-    print("RACCOMANDAZIONE")
+    print("RECOMMENDATION")
     print(rec)
-    print(f"Tempo totale: {time.time()-t_total:.0f}s")
+    print(f"Total time: {time.time()-t_total:.0f}s")
     print(f"{'═'*65}")
 
     # ── Plot ─────────────────────────────────────────────────────────
@@ -504,17 +504,17 @@ def run_comparison(extents: list | None = None,
         "recommendation":      rec,
         "thresholds": {
             "ratio_3x":           THRESH_RATIO_3X,
-            "ratio_3x_note":      "applicato su area donor eleggibile vs area PA piena (Step01 meets_3x_guideline_area)",
+            "ratio_3x_note":      "applied on eligible donor area vs full PA area (Step01 meets_3x_guideline_area)",
             "match_coverage_pct": THRESH_MATCH_COV_PCT,
             "twin_pass_pct":      THRESH_TWIN_PASS_PCT,
-            "twin_compliant":     "twin_test_compliant deve essere True (Step03)",
+            "twin_compliant":     "twin_test_compliant must be True (Step03)",
             "smd_max":            THRESH_SMD_MAX,
         },
         "output_dir": str(out_dir),
     }
     with open(out_dir / "comparison_summary.json", "w", encoding="utf-8") as f:
         json.dump(summary_out, f, indent=2)
-    print(f"  Riepilogo JSON: {out_dir / 'comparison_summary.json'}")
+    print(f"  JSON summary: {out_dir / 'comparison_summary.json'}")
 
     rec_path = out_dir / "recommendation.txt"
     rec_path.write_text(rec, encoding="utf-8")
