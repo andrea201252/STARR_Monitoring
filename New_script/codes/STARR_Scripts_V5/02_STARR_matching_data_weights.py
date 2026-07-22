@@ -777,7 +777,12 @@ def run_matching(proj_df, donor_df, weights_dict, cont_covs, meta):
                 ]:
                     if _src in dr.index:
                         rec[_dst] = dr[_src]
-                for c in ["SOC_g_kg", "NDVI_t0", "elevation", "slope_deg", "dist_roads_km"]:
+                # proj_/ref_/diff_ per OGNI covariata di matching (non solo le 5
+                # obbligatorie) così i diagnostici per-covariata sono self-contained.
+                _pair_cols = list(dict.fromkeys(
+                    ["SOC_g_kg", "NDVI_t0", "elevation", "slope_deg", "dist_roads_km"]
+                    + list(cont_covs)))
+                for c in _pair_cols:
                     if c in pr.index and c in dr.index:
                         rec[f"proj_{c}"] = float(pr[c])
                         rec[f"ref_{c}"]  = float(dr[c])
@@ -922,6 +927,73 @@ def plot_match_distances(matched_df, out_dir=None):
     return fig
 
 
+def plot_covariate_pairs(proj_df, matched_df, smd_df, cont_covs,
+                         caliper_tol=None, out_dir=None):
+    """Per-covariate hexbin of the matched pairs: project pixel value (x) vs its
+    matched donor value (y), with the 1:1 line, the caliper band (when in range)
+    and the SMD annotation (full PA vs matched donors).
+
+    Uses the paired columns proj_<cov>/ref_<cov> written by run_matching for the
+    mandatory calipers, and falls back to proj_idx (join to proj_df) for the
+    other covariates (e.g. NDVI_slope_5yr).
+    """
+    caliper_tol = caliper_tol or {}
+    covs = [c for c in cont_covs if (c in matched_df.columns or f"ref_{c}" in matched_df.columns)]
+    if not covs:
+        return None
+    has_pidx = "proj_idx" in matched_df.columns
+    ncol = 3
+    nrow = int(np.ceil(len(covs) / ncol))
+    fig, axes = plt.subplots(nrow, ncol, figsize=(ncol * 4.3, nrow * 3.6), squeeze=False)
+    axes = axes.ravel()
+
+    for i, cov in enumerate(covs):
+        ax = axes[i]
+        # donor (y) and project (x) values, paired per matched row
+        y = (matched_df[f"ref_{cov}"] if f"ref_{cov}" in matched_df.columns
+             else matched_df[cov]).astype(float).to_numpy()
+        if f"proj_{cov}" in matched_df.columns:
+            x = matched_df[f"proj_{cov}"].astype(float).to_numpy()
+        elif has_pidx and cov in proj_df.columns:
+            x = proj_df[cov].reindex(matched_df["proj_idx"].to_numpy()).astype(float).to_numpy()
+        else:
+            ax.set_visible(False)
+            continue
+        m = np.isfinite(x) & np.isfinite(y)
+        x, y = x[m], y[m]
+        if len(x) == 0:
+            ax.set_visible(False)
+            continue
+
+        ax.hexbin(x, y, gridsize=30, cmap="viridis", mincnt=1, linewidths=0.2)
+        lo = float(min(x.min(), y.min()))
+        hi = float(max(x.max(), y.max()))
+        ax.plot([lo, hi], [lo, hi], "k-", lw=1.0)                     # 1:1 line
+        tol = caliper_tol.get(cov)
+        if tol is not None and 0 < tol < (hi - lo):                  # band only if visible in range
+            ax.plot([lo, hi], [lo + tol, hi + tol], "r--", lw=0.8, alpha=0.7)
+            ax.plot([lo, hi], [lo - tol, hi - tol], "r--", lw=0.8, alpha=0.7)
+
+        if cov in smd_df.index:
+            smd = smd_df.loc[cov, "SMD"]
+            tag = "PASS" if bool(smd_df.loc[cov, "passed"]) else "FAIL"
+            ax.set_title(f"{cov} | SMD={smd:.4f} {tag}", fontsize=9)
+        else:
+            ax.set_title(cov, fontsize=9)
+        ax.set_xlabel("Project Area")
+        ax.set_ylabel("Matched donor")
+        ax.grid(alpha=0.25)
+
+    for j in range(len(covs), len(axes)):
+        axes[j].set_visible(False)
+
+    fig.suptitle("Matched pairs; SMD annotated = full PA vs matched donors", fontsize=11)
+    plt.tight_layout(rect=[0, 0, 1, 0.97])
+    if out_dir:
+        fig.savefig(Path(out_dir) / "covariate_match_pairs.png", dpi=150, bbox_inches="tight")
+    return fig
+
+
 # ── MAIN ─────────────────────────────────────────────────────────────
 
 def run_matching_step(base_dirs=None, output_dir=None,
@@ -1028,6 +1100,17 @@ def run_matching_step(base_dirs=None, output_dir=None,
     print("\n[6] Plot + saving...")
     fig_s = plot_smd(smd_df, out_dir, "SMD_lollipop.png", "Mandatory covariate balance")
     fig_d = plot_match_distances(matched_df, out_dir)
+    # Per-covariate hexbin of the matched pairs (project vs matched donor)
+    caliper_tol = {
+        "SOC_g_kg":      (abs(float(proj_df["SOC_g_kg"].mean())) * CALIPER_SOC_FRAC_OF_PROJECT_MEAN
+                          if "SOC_g_kg" in proj_df.columns else None),
+        "NDVI_t0":       (abs(float(proj_df["NDVI_t0"].mean())) * CALIPER_NDVI_T0_FRAC_OF_PROJECT_MEAN
+                          if "NDVI_t0" in proj_df.columns else None),
+        "elevation":     CALIPER_ELEVATION_M,
+        "slope_deg":     CALIPER_SLOPE_DEG,
+        "dist_roads_km": CALIPER_ROADS_KM,
+    }
+    fig_p = plot_covariate_pairs(proj_df, matched_df, smd_df, cont_covs, caliper_tol, out_dir)
     # fig_n = plot_smd(ndvi_smd_df, out_dir, "SMD_annual_NDVI.png",
                     #  "Bilanciamento NDVI annuale") if not ndvi_smd_df.empty else None
 
