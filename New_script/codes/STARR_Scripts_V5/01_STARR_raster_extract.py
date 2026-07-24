@@ -108,6 +108,15 @@ PROJECT_NAME = "Idiofa_Lobi"
 BASE_DIR_CANDIDATES: list = []
 
 OUTPUT_DIR = None
+
+# Struttura cartelle di output — EDITABILE DAL NOTEBOOK (es. s01.OUTPUTS_DIRNAME = "...").
+# Path finale: <base_dir> / OUTPUTS_DIRNAME / <RUN_ID> / STEP_DIRNAME
+# Metti OUTPUTS_DIRNAME = "" per NON usare la sottocartella "STARR_outputs".
+# Nota: Step 02/03/04 ereditano OUTPUTS_DIRNAME e <RUN_ID> da questo path
+# (via base_dirs[0].parent), quindi cambiarlo qui si propaga a valle.
+OUTPUTS_DIRNAME = "STARR_outputs"
+STEP_DIRNAME    = "01_extract"
+
 # I pattern vengono costruiti a runtime in run_extraction() per evitare
 # che RUN_ID_BASE vuoto produca glob non validi come "covariates_project_[]*.tif".
 PROJECT_TIF_PATTERN = None  # calcolato in run_extraction()
@@ -981,7 +990,7 @@ def run_extraction(base_dirs=None, output_dir=None, verbose=True,
     base_dirs = [Path(b) for b in base_dirs]
 
     out_dir = (Path(output_dir) if output_dir
-               else base_dirs[0] / "STARR_outputs" / effective_run_id / "01_extract")
+               else base_dirs[0] / OUTPUTS_DIRNAME / effective_run_id / STEP_DIRNAME)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     if verbose:

@@ -61,6 +61,12 @@ THRESH_MATCH_COV_PCT  = 90.0
 THRESH_TWIN_PASS_PCT  = 30.0
 THRESH_SMD_MAX        = 0.10
 
+# Struttura cartelle di output — EDITABILE DAL NOTEBOOK
+# (s00b.OUTPUTS_DIRNAME / s00b.COMPARISON_DIRNAME).
+# Path: <base_dir> / OUTPUTS_DIRNAME / COMPARISON_DIRNAME
+OUTPUTS_DIRNAME    = "STARR_outputs"
+COMPARISON_DIRNAME = "comparison"
+
 # ══════════════════════════════════════════════════════════════════════
 
 
@@ -405,7 +411,7 @@ def run_comparison(extents: list | None = None,
             f"No directory found: {BASE_DIR_CANDIDATES}")
 
     out_dir = (Path(output_dir) if output_dir
-               else Path(base_dirs[0]) / "STARR_outputs" / "comparison")
+               else Path(base_dirs[0]) / OUTPUTS_DIRNAME / COMPARISON_DIRNAME)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     s00 = load_module("00_STARR_run_steps_01_to_05.py", "s00")

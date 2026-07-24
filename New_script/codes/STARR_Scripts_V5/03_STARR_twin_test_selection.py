@@ -54,6 +54,10 @@ MIN_SELECTED_PAIRS    = 30
 GRID_N_EXAMPLES       = 16
 GRID_SEED             = 42
 
+# Sottocartella di output di questo step — EDITABILE DAL NOTEBOOK (s03.STEP_DIRNAME).
+# Il livello OUTPUTS_DIRNAME/<RUN_ID> è ereditato dal path di Step 01/02.
+STEP_DIRNAME = "03_twin_test"
+
 
 # ================================================================
 # FUNZIONI IO
@@ -419,7 +423,7 @@ def run_twin_test(base_dirs=None, output_dir=None, matched_df=None,
                    proj_df=None, meta=None, verbose=True):
     if base_dirs is None: raise RuntimeError("base_dirs not provided.")
     base_dirs = [Path(b) for b in base_dirs]
-    out_dir   = Path(output_dir) if output_dir else base_dirs[0].parent/"03_twin_test"
+    out_dir   = Path(output_dir) if output_dir else base_dirs[0].parent / STEP_DIRNAME
     out_dir.mkdir(parents=True, exist_ok=True)
 
     if meta is None:

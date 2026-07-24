@@ -91,6 +91,10 @@ EXPORT_NATIVE_MATCHED_CELLS_SHP = True
 
 CRS_GEO = "EPSG:4326"
 
+# Sottocartella di output di questo step — EDITABILE DAL NOTEBOOK (s04.STEP_DIRNAME).
+# Il livello OUTPUTS_DIRNAME/<RUN_ID> è ereditato dal path di Step 01/02/03.
+STEP_DIRNAME = "04_reference_area_lock"
+
 
 # ================================================================
 # FUNZIONI IO
@@ -681,7 +685,7 @@ def run_reference_area_lock(base_dirs=None, output_dir=None, passed_df=None, met
             "or specify the Step 03 output directory."
         )
     base_dirs = [Path(b) for b in base_dirs]
-    out_dir = Path(output_dir) if output_dir else base_dirs[0].parent / "04_reference_area_lock"
+    out_dir = Path(output_dir) if output_dir else base_dirs[0].parent / STEP_DIRNAME
     out_dir.mkdir(parents=True, exist_ok=True)
 
     if meta is None:

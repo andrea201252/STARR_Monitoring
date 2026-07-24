@@ -114,6 +114,10 @@ BASE_DIR_CANDIDATES = [
 OUTPUT_FORMAT = "parquet"
 STRICT_LOCK_REQUIRED = True
 
+# Nome cartella output radice — EDITABILE DAL NOTEBOOK (s05.OUTPUTS_DIRNAME = "...").
+# Path radice del run: <base_dir> / OUTPUTS_DIRNAME / <RUN_ID>
+OUTPUTS_DIRNAME = "STARR_outputs"
+
 # Se i raster di stock sono C_t0 e C_y, ΔC = (C_y - C_t0) / MONITORING_PERIOD_YEARS.
 # Se si usano raster ΔC diretti, questo valore viene solo riportato.
 MONITORING_PERIOD_YEARS = 6.0
@@ -257,7 +261,7 @@ def detect_base_dirs():
     bases = [Path(p) for p in BASE_DIR_CANDIDATES if Path(p).exists()]
     if not bases:
         raise FileNotFoundError(f"No base directory found: {BASE_DIR_CANDIDATES}")
-    root = bases[0] / "STARR_outputs" / RUN_ID
+    root = bases[0] / OUTPUTS_DIRNAME / RUN_ID
     return root, {
         "root": root,
         "01": root / "01_extract",
@@ -280,7 +284,7 @@ def build_dirs(base_dirs=None):
     if (b0 / "01_extract").exists() or (b0 / "03_twin_test").exists():
         root = b0
     else:
-        root = b0 / "STARR_outputs" / RUN_ID
+        root = b0 / OUTPUTS_DIRNAME / RUN_ID
 
     return root, {
         "root": root,

@@ -86,6 +86,11 @@ MAX_DONOR_REUSE       = 1
 # Mettere [] per (ri)usare tutte le covariate a valori.
 EXCLUDE_COVARIATES_FROM_MATCHING = ["precip_mm_yr"]
 
+# Sottocartella di output di questo step — EDITABILE DAL NOTEBOOK (s02.STEP_DIRNAME).
+# Il livello OUTPUTS_DIRNAME/<RUN_ID> è ereditato dal path di Step 01
+# (out_dir = base_dirs[0].parent / STEP_DIRNAME).
+STEP_DIRNAME = "02_matching"
+
 # ── BATCH KNN (FIX RAM) ───────────────────────────────────────────────
 # zp_w NON viene mai precalcolato per tutti i project pixel.
 # Lo scaling+whitening avviene on-the-fly per ogni batch.
@@ -1007,7 +1012,7 @@ def run_matching_step(base_dirs=None, output_dir=None,
             "or specify the Step 01 output directory."
         )
     base_dirs = [Path(b) for b in base_dirs]
-    out_dir   = Path(output_dir) if output_dir else base_dirs[0].parent / "02_matching"
+    out_dir   = Path(output_dir) if output_dir else base_dirs[0].parent / STEP_DIRNAME
     out_dir.mkdir(parents=True, exist_ok=True)
 
     if verbose:
