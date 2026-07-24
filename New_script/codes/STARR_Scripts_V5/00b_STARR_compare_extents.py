@@ -367,7 +367,8 @@ def run_comparison(extents: list | None = None,
                    run_id_base: str | None = None,
                    fnf_shapefile: str | None = None,
                    eligible_shapefile: str | None = None,
-                   use_eligibility: bool = True) -> dict:
+                   use_eligibility: bool = True,
+                   outputs_dirname: str | None = None) -> dict:
     """
     Esegue la pipeline Steps 01-04 per ogni extent e aggrega i risultati.
 
@@ -411,7 +412,7 @@ def run_comparison(extents: list | None = None,
             f"No directory found: {BASE_DIR_CANDIDATES}")
 
     out_dir = (Path(output_dir) if output_dir
-               else Path(base_dirs[0]) / OUTPUTS_DIRNAME / COMPARISON_DIRNAME)
+               else Path(base_dirs[0]) / (outputs_dirname or OUTPUTS_DIRNAME) / COMPARISON_DIRNAME)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     s00 = load_module("00_STARR_run_steps_01_to_05.py", "s00")
@@ -442,6 +443,7 @@ def run_comparison(extents: list | None = None,
                 fnf_shapefile      = fnf_shapefile,
                 eligible_shapefile = eligible_shapefile,
                 use_eligibility    = use_eligibility,
+                outputs_dirname    = outputs_dirname,
             )
             m = extract_metrics(result)
             all_results[lbl] = result

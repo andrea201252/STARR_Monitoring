@@ -68,7 +68,8 @@ def main(run_step_05: bool = True,
          base_dir: str = BASE_DIR,
          fnf_shapefile: str | None = FNF_SHAPEFILE,
          eligible_shapefile: str | None = ELIGIBLE_SHAPEFILE,
-         use_eligibility: bool = USE_ELIGIBILITY) -> dict:
+         use_eligibility: bool = USE_ELIGIBILITY,
+         outputs_dirname: str | None = None) -> dict:
     """
     Esegue la pipeline STARR completa con l'estensione donor scelta.
 
@@ -99,6 +100,13 @@ def main(run_step_05: bool = True,
     s02 = load_module("02_STARR_matching_data_weights.py",  "s02")
     s03 = load_module("03_STARR_twin_test_selection.py",    "s03")
     s04 = load_module("04_STARR_reference_area_lock.py",    "s04")
+
+    # Propaga il nome della cartella output (editabile dal notebook / da 00b) ai
+    # moduli freschi caricati QUI. main() ricarica le proprie copie di s01..s05,
+    # quindi settare s01.OUTPUTS_DIRNAME dal notebook NON basta: va passato come
+    # parametro. Step 02/03/04 ereditano il livello da Step 01 (base_dirs[0].parent).
+    if outputs_dirname is not None:
+        s01.OUTPUTS_DIRNAME = outputs_dirname
 
     # Costruisce la lista di directory base dal singolo path CONFIG
     _base_dirs = [base_dir] if base_dir else []
@@ -181,6 +189,8 @@ def main(run_step_05: bool = True,
 
     s05 = load_module(
         "05_STARR_baseline_confidence_interval_UNCBSL.py", "s05")
+    if outputs_dirname is not None:
+        s05.OUTPUTS_DIRNAME = outputs_dirname
     # Step 05 restituisce 6 valori: control_pixels, project_pixels, summary, report, figs, out_dir
     control_pixels, project_pixels, ci_summary, report, fig05, out05 = \
         s05.run_baseline_ci_uncbsl()
