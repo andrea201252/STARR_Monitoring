@@ -31,6 +31,7 @@ Fix rispetto alla versione precedente:
   BUG-06  x_utm/y_utm calcolati in _process_block (no re-proiezione nel plot)
 """
 
+import os
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -109,12 +110,15 @@ BASE_DIR_CANDIDATES: list = []
 
 OUTPUT_DIR = None
 
-# Struttura cartelle di output — EDITABILE DAL NOTEBOOK (es. s01.OUTPUTS_DIRNAME = "...").
+# Struttura cartelle di output — CONFIGURABILE DAL NOTEBOOK.
 # Path finale: <base_dir> / OUTPUTS_DIRNAME / <RUN_ID> / STEP_DIRNAME
-# Metti OUTPUTS_DIRNAME = "" per NON usare la sottocartella "STARR_outputs".
-# Nota: Step 02/03/04 ereditano OUTPUTS_DIRNAME e <RUN_ID> da questo path
-# (via base_dirs[0].parent), quindi cambiarlo qui si propaga a valle.
-OUTPUTS_DIRNAME = "STARR_outputs"
+#
+# Modo consigliato (settare UNA volta in cima al notebook, PRIMA di caricare i
+# moduli):   import os; os.environ["STARR_OUTPUTS_DIRNAME"] = "STARR_outputs_DrySeason"
+# Il default sotto legge quella variabile d'ambiente (sopravvive al re-loading
+# interno di 00/00b). "" per NON usare la sottocartella. Step 02/03/04 ereditano
+# il livello da Step 01 (base_dirs[0].parent), quindi basta impostarla una volta.
+OUTPUTS_DIRNAME = os.environ.get("STARR_OUTPUTS_DIRNAME", "STARR_outputs")
 STEP_DIRNAME    = "01_extract"
 
 # I pattern vengono costruiti a runtime in run_extraction() per evitare

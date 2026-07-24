@@ -28,6 +28,7 @@ Criteri di sufficienza (tutti e 4 devono essere soddisfatti)
   smd_max             ≤ 0.10  (Step 02)
 """
 
+import os
 import gc
 import json
 import importlib.util
@@ -61,10 +62,11 @@ THRESH_MATCH_COV_PCT  = 90.0
 THRESH_TWIN_PASS_PCT  = 30.0
 THRESH_SMD_MAX        = 0.10
 
-# Struttura cartelle di output — EDITABILE DAL NOTEBOOK
-# (s00b.OUTPUTS_DIRNAME / s00b.COMPARISON_DIRNAME).
+# Struttura cartelle di output — CONFIGURABILE DAL NOTEBOOK.
 # Path: <base_dir> / OUTPUTS_DIRNAME / COMPARISON_DIRNAME
-OUTPUTS_DIRNAME    = "STARR_outputs"
+# Modo consigliato: os.environ["STARR_OUTPUTS_DIRNAME"] = "..." in cima al
+# notebook, PRIMA di caricare i moduli (vale anche per gli step 01-05).
+OUTPUTS_DIRNAME    = os.environ.get("STARR_OUTPUTS_DIRNAME", "STARR_outputs")
 COMPARISON_DIRNAME = "comparison"
 
 # ══════════════════════════════════════════════════════════════════════

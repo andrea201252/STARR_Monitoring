@@ -61,6 +61,7 @@ control_pixels, project_pixels, summary, report, figs, out05 = (
 )
 """
 
+import os
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -114,9 +115,10 @@ BASE_DIR_CANDIDATES = [
 OUTPUT_FORMAT = "parquet"
 STRICT_LOCK_REQUIRED = True
 
-# Nome cartella output radice — EDITABILE DAL NOTEBOOK (s05.OUTPUTS_DIRNAME = "...").
+# Nome cartella output radice — CONFIGURABILE DAL NOTEBOOK.
 # Path radice del run: <base_dir> / OUTPUTS_DIRNAME / <RUN_ID>
-OUTPUTS_DIRNAME = "STARR_outputs"
+# Modo consigliato: os.environ["STARR_OUTPUTS_DIRNAME"] = "..." in cima al notebook.
+OUTPUTS_DIRNAME = os.environ.get("STARR_OUTPUTS_DIRNAME", "STARR_outputs")
 
 # Se i raster di stock sono C_t0 e C_y, ΔC = (C_y - C_t0) / MONITORING_PERIOD_YEARS.
 # Se si usano raster ΔC diretti, questo valore viene solo riportato.
