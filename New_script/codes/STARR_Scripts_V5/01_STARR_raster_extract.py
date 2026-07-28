@@ -15,7 +15,9 @@ SHAPEFILE usati:
   FNF18_fullBuffer.shp
     Poligoni delle aree FORESTALI a T0 (2018).
     Pixel donor DENTRO questi poligoni vengono rimossi (forest ≠ eleggibile).
-    Pixel PA DENTRO questi poligoni vengono rimossi (PA deve essere non-forest a T0).
+    La PA NON viene filtrata FNF di default (vedi FILTER_PA_FNF=False):
+    mantiene tutti i suoi pixel. Mettere FILTER_PA_FNF=True per il vecchio
+    comportamento (rimozione pixel forest a T0 anche dalla PA).
 
   Eligible_FNF_fullBuffer.shp
     Poligoni delle aree ELEGGIBILI come donor (non-forest per 10 anni ante T0).
@@ -154,6 +156,15 @@ ELIGIBLE_SHAPEFILE = (
 #                             area non-forest (minimo richiesto da GS).
 # Quando False, ELIGIBLE_SHAPEFILE viene ignorato per il donor.
 USE_ELIGIBILITY = True
+
+# ── TOGGLE FILTRO FNF SULLA PA ───────────────────────────────────────
+# Se applicare il filtro forest/non-forest (FNF18) anche alla PROJECT AREA,
+# rimuovendo i pixel forestali a T0. Di DEFAULT DISATTIVATO: la PA è definita
+# dalla propria geometria GEE (già area eleggibile) e non va ri-filtrata.
+#   FILTER_PA_FNF = False → la PA mantiene TUTTI i suoi pixel (nessun filtro FNF).
+#   FILTER_PA_FNF = True  → rimuove dalla PA i pixel forest a T0 (comportamento v5).
+# Nota: il filtro FNF sul DONOR resta attivo indipendentemente da questo toggle.
+FILTER_PA_FNF = False
 
 # Se True, usa all_touched=False (solo pixel con centroide dentro il poligono).
 # Raccomandato per poligoni precisi; mettere True per poligoni grossolani.
@@ -1026,8 +1037,13 @@ def run_extraction(base_dirs=None, output_dir=None, verbose=True,
     proj_df, sampled = spatially_stratified_sample(proj_df)
     _purge(label=f"PA edge/sample filters ({n_pa_raw:,}->{len(proj_df):,})")
 
-    # ── FILTRO SHAPEFILE PA (solo FNF18) ─────────────────────────────
-    if proj_tiles and (_fnf_shapefile is not None):
+    # ── FILTRO SHAPEFILE PA (solo FNF18) — DISATTIVATO di default ─────
+    # Vedi FILTER_PA_FNF in config: la PA non va ri-filtrata per forest/non-forest
+    # (è già definita dalla sua geometria eleggibile GEE).
+    if not FILTER_PA_FNF:
+        print("\n[2c] PA FNF filter DISABLED (FILTER_PA_FNF=False): "
+              f"PA keeps all {len(proj_df):,} pixels (no forest removal).")
+    elif proj_tiles and (_fnf_shapefile is not None):
         print("\n[2c] PA shapefile filter (FNF18 — removes forest pixels at T0)...")
         n_before = len(proj_df)
         proj_df  = apply_shapefile_filters(
