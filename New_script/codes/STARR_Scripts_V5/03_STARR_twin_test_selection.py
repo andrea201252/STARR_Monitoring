@@ -49,8 +49,22 @@ if not _is_notebook():
 
 PVALUE_THRESHOLD      = 0.05
 PAIR_SLOPE_DIFF_MAX   = 0.005
-MIN_SELECTED_FRACTION = 0.30
+
+# Frazione MINIMA di coppie che la selezione del parallel-trends test deve
+# mantenere. GS STARR NON richiede una frazione minima (chiede solo trend
+# paralleli p>0.05 sui pixel selezionati): quindi 0.0 = nessun pavimento sul %.
+# Il solo limite rimasto è MIN_SELECTED_PAIRS (minimo ASSOLUTO di coppie, per
+# validità statistica — non una percentuale).
+MIN_SELECTED_FRACTION = 0.0
 MIN_SELECTED_PAIRS    = 30
+
+# Ricerca iterativa: frazioni esplorate (dal 95% giù). Generata da config, non
+# più hard-coded con pavimento al 30%. Il minimo assoluto di coppie resta
+# garantito da MIN_SELECTED_PAIRS.
+SELECTION_FRAC_MAX  = 0.95
+SELECTION_FRAC_MIN  = 0.05
+SELECTION_FRAC_STEP = 0.05
+
 GRID_N_EXAMPLES       = 16
 GRID_SEED             = 42
 
@@ -311,7 +325,10 @@ def select_pairs_with_parallel_trend(result_df, ndvi_year_cols):
     valid_long_pair_arr = valid_long_full["pair_id"].to_numpy()
 
     best = None
-    for frac in [0.95,0.90,0.85,0.80,0.75,0.70,0.65,0.60,0.55,0.50,0.45,0.40,0.35,0.30]:
+    # Frazioni esplorate: generate da config (niente più pavimento hard-coded al 30%).
+    search_fracs = [round(float(f), 4) for f in
+                    np.arange(SELECTION_FRAC_MAX, SELECTION_FRAC_MIN - 1e-9, -SELECTION_FRAC_STEP)]
+    for frac in search_fracs:
         n = max(min_n, int(len(valid)*frac))
         if n > len(valid): continue
         sub_ids  = valid_pair_ids[:n]

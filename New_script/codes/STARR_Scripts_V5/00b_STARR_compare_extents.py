@@ -59,7 +59,9 @@ BASE_DIR_CANDIDATES = []
 # Soglie di sufficienza
 THRESH_RATIO_3X       = 3.0
 THRESH_MATCH_COV_PCT  = 90.0
-THRESH_TWIN_PASS_PCT  = 30.0
+# GS STARR NON richiede una % minima di coppie che passano il parallel test:
+# 0.0 = criterio disattivato (il valore resta mostrato, ma non fa più da gate).
+THRESH_TWIN_PASS_PCT  = 0.0
 THRESH_SMD_MAX        = 0.10
 
 # Struttura cartelle di output — CONFIGURABILE DAL NOTEBOOK.
