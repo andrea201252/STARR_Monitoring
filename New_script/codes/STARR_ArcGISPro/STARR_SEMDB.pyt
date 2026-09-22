@@ -154,7 +154,7 @@ class STARRBaselineTool(object):
         add("eligible_shapefile", "Eligible shapefile (donor)", "DEFeatureClass", optional=True)
         add("use_eligibility", "Apply eligibility filter to donor", "GPBoolean", True, optional=True)
         add("donor_extent_km", "Donor extent around PA edge", "GPString", "full",
-            optional=True, filter_list=["full", "5", "10", "20", "30"])
+            optional=True, filter_list=["full", "5", "10", "20", "30", "40", "50", "60"])
         # matching parameters
         add("k_neighbours", "K neighbours (K:1 matching)", "GPLong", 10, optional=True)
         add("knn_query_candidates", "KNN query candidates", "GPLong", 150, optional=True)

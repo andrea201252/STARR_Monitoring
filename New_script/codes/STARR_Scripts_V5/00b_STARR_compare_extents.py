@@ -50,7 +50,7 @@ HERE = Path(__file__).resolve().parent
 # ══════════════════════════════════════════════════════════════════════
 
 # Extents to compare — "full" + numeric km
-COMPARE_EXTENTS: list = ["full", 5, 10, 20, 30]
+COMPARE_EXTENTS: list = ["full", 5, 10, 20, 30, 40, 50, 60]
 
 # Base directory where to find the TIFs and where to write the results
 BASE_DIR_CANDIDATES = []
@@ -486,7 +486,7 @@ def run_comparison(extents: list | None = None,
         rec = (
             "NO extent satisfies all criteria.\n"
             "Suggested actions:\n"
-            "  1. Increase the maximum buffer (> 30 km)\n"
+            "  1. Increase the maximum buffer (> 60 km)\n"
             "  2. Check the quality of the Eligible_FNF and FNF18 shapefiles\n"
             "  3. Relax PAIR_SLOPE_DIFF_MAX in Step 03 (0.005 → 0.01)\n"
             "  4. Check the NDVI coverage in the donor TIF"

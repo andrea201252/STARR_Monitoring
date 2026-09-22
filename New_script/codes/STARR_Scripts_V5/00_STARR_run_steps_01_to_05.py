@@ -13,6 +13,9 @@ Each extent generates an isolated output directory (run_id includes the suffix).
   10      → 10 km buffer  (recommended starting point)
   20      → 20 km buffer
   30      → 30 km buffer
+  40      → 40 km buffer
+  50      → 50 km buffer
+  60      → 60 km buffer
 
 Step 02 is intentionally called with donor_df=None.
 Step 05 requires the monitored carbon stock change (controlled externally).
@@ -29,7 +32,7 @@ HERE = Path(__file__).resolve().parent
 # CONFIG — the only section to modify between one run and another
 # ══════════════════════════════════════════════════════════════════════
 
-DONOR_EXTENT_KM: float | str = 10   # "full" | 5 | 10 | 20 | 30
+DONOR_EXTENT_KM: float | str = 10   # "full" | 5 | 10 | 20 | 30 | 40 | 50 | 60
 
 # Base run identifier (used for TIF file names and output directory).
 # Must match the prefix of the TIFs exported by GEE:
