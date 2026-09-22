@@ -155,8 +155,8 @@ CI90_Z_VALUE = 1.645
 # IPCC 2019 Refinement, Vol 4, Ch 4, Table 4.4.
 # Default R for tropical moist forest ≈ 0.24.  Set to 0.0 only if the rasters
 # already include the belowground biomass or if the BGB is excluded by design.
-BIOMASS_TO_CARBON_FRACTION = 0.47
-ROOT_TO_SHOOT_RATIO = 0.4
+BIOMASS_TO_CARBON_FRACTION = float(os.environ.get("STARR_BIOMASS_TO_CARBON_FRACTION", "0.47"))
+ROOT_TO_SHOOT_RATIO = float(os.environ.get("STARR_ROOT_TO_SHOOT_RATIO", "0.4"))
 
 # PM REQUEST: compute the unadjusted baseline ALSO when the mean control ΔC
 # is <= 0 (negative baseline), instead of zeroing it with max(x,0).

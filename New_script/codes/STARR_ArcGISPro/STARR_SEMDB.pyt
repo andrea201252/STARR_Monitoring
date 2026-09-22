@@ -73,6 +73,24 @@ class _Tee:
             self._buf = ""
 
 
+def _win_long(path):
+    """Windows MAX_PATH (260 char) guard. Deep Google-Drive / shared-drive output
+    folders plus a long run id easily exceed 260 characters, which makes
+    os.makedirs / file writes fail with WinError 3. On Windows, for a path that
+    risks exceeding the limit, return the extended-length form (\\\\?\\ prefix)
+    which lifts the 260-char cap; short paths are returned unchanged."""
+    if os.name != "nt":
+        return path
+    p = os.path.abspath(path)
+    if p.startswith("\\\\?\\"):
+        return p
+    if len(p) < 200:            # comfortably short → keep the plain path
+        return p
+    if p.startswith("\\\\"):    # UNC path \\server\share\...
+        return "\\\\?\\UNC\\" + p[2:]
+    return "\\\\?\\" + p
+
+
 def _open_log(out_dir, name):
     """Create <out_dir>/<name>.log and return an open file handle (or None)."""
     try:
@@ -173,6 +191,8 @@ class STARRBaselineTool(object):
         add("agb_project_y", "AGB raster — project monitoring year", "DERasterDataset", optional=True)
         add("use_block_ci", "Conservative block-based CI (larger of pixel/block)", "GPBoolean", True, optional=True)
         add("block_size_m", "Spatial block size (m)", "GPDouble", 500.0, optional=True)
+        add("root_to_shoot_ratio", "Root:shoot ratio R  (AGB→C: C = AGB × CF × (1+R); set 0 if raster is already total carbon)", "GPDouble", 0.4, optional=True)
+        add("biomass_to_carbon_fraction", "Carbon fraction CF", "GPDouble", 0.47, optional=True)
         return P
 
     def isLicensed(self):
@@ -214,7 +234,10 @@ class STARRBaselineTool(object):
 
         run_id_full = run_id_base
 
-        out_dir = os.path.join(out_root, "STARR_outputs", run_id_full)
+        # NOTE: the chosen output folder IS the root (no extra 'STARR_outputs'
+        # level — that only shortens the path). _win_long lifts the Windows
+        # 260-char MAX_PATH limit for deep shared-drive folders + long run ids.
+        out_dir = _win_long(os.path.join(out_root, run_id_full))
         d01 = os.path.join(out_dir, "01_extract")
         os.makedirs(d01, exist_ok=True)
 
@@ -303,6 +326,13 @@ class STARRBaselineTool(object):
                 s05.raster_pixel_area_ha = gio.raster_pixel_area_ha
                 s05.PROJECT_NAME = project_name
                 s05.RUN_ID = run_id_full
+                _r2s = val("root_to_shoot_ratio")
+                _cf = val("biomass_to_carbon_fraction")
+                if _r2s is not None:
+                    s05.ROOT_TO_SHOOT_RATIO = float(_r2s)
+                if _cf is not None:
+                    s05.BIOMASS_TO_CARBON_FRACTION = float(_cf)
+                arcpy.AddMessage(f"  Carbon: CF={s05.BIOMASS_TO_CARBON_FRACTION} R(root:shoot)={s05.ROOT_TO_SHOOT_RATIO}")
 
                 donor_spec = _agb_spec(sval("agb_control_t0"), sval("agb_control_y"), raster_units)
                 project_spec = _agb_spec(sval("agb_project_t0"), sval("agb_project_y"), raster_units)
@@ -386,6 +416,8 @@ class STARRStep05Tool(object):
         add("agb_project_y", "AGB raster — project monitoring year", "DERasterDataset")
         add("use_block_ci", "Conservative block-based CI", "GPBoolean", True, optional=True)
         add("block_size_m", "Spatial block size (m)", "GPDouble", 500.0, optional=True)
+        add("root_to_shoot_ratio", "Root:shoot ratio R  (AGB→C: C = AGB × CF × (1+R); set 0 if raster is already total carbon)", "GPDouble", 0.4, optional=True)
+        add("biomass_to_carbon_fraction", "Carbon fraction CF", "GPDouble", 0.47, optional=True)
         return P
 
     def isLicensed(self):
@@ -417,6 +449,7 @@ class STARRStep05Tool(object):
         raster_units = sval("raster_units") or "AGB_Mg_ha"
 
         sys.path.insert(0, _HERE); sys.path.insert(0, _STEPS)
+        run_folder = _win_long(run_folder)
         d05 = os.path.join(run_folder, "05_baseline_CI_UNCBSL")
 
         old_stdout = sys.stdout
@@ -435,6 +468,13 @@ class STARRStep05Tool(object):
             s05.raster_pixel_area_ha = gio.raster_pixel_area_ha
             s05.PROJECT_NAME = project_name
             s05.RUN_ID = run_id
+            _r2s = val("root_to_shoot_ratio")
+            _cf = val("biomass_to_carbon_fraction")
+            if _r2s is not None:
+                s05.ROOT_TO_SHOOT_RATIO = float(_r2s)
+            if _cf is not None:
+                s05.BIOMASS_TO_CARBON_FRACTION = float(_cf)
+            arcpy.AddMessage(f"  Carbon: CF={s05.BIOMASS_TO_CARBON_FRACTION} R(root:shoot)={s05.ROOT_TO_SHOOT_RATIO}")
 
             donor_spec = _agb_spec(sval("agb_control_t0"), sval("agb_control_y"), raster_units)
             project_spec = _agb_spec(sval("agb_project_t0"), sval("agb_project_y"), raster_units)

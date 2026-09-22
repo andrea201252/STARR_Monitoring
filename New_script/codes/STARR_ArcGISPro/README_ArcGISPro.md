@@ -65,6 +65,16 @@ even after the dialog closes.
 | Donor sample cap | 0 = use all donors |
 | T0 / monitoring year, min period, project area (ha) | Step 05 |
 | AGB rasters (control/project × T0/Y) + units | Step 05 (`AGB_Mg_ha` or `tC_ha`) |
+| Root:shoot ratio R, carbon fraction CF | Step 05 carbon conversion: C = AGB × CF × (1+R). Set **R = 0** if the raster already includes roots or is already total carbon. |
+
+## Output folder & Windows long paths
+
+The output folder you pick **is** the run root; the tool writes
+`<output folder>/<run id>/01_extract`, `…/02_matching`, … directly under it (no
+extra `STARR_outputs` level). Deep shared-drive folders (e.g. `G:\Drive
+condivisi\…`) plus a long run id can exceed the Windows 260-character path limit;
+the tool automatically switches to Windows extended-length paths (`\\?\`) so this
+no longer fails. If you still hit a path error, pick a shorter output folder.
 
 **Band names matter**: the covariate GeoTIFF must carry band descriptions
 (`WRB2_CODE`, `SOC_g_kg`, `NDVI_t0`, `elevation`, `slope_deg`, `dist_roads_km`,
