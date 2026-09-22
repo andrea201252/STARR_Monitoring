@@ -40,19 +40,51 @@ def _load(mod_name, filename, folder=_HERE):
     return mod
 
 
-class _StdoutToArcpy:
-    """Redirect the rich print() output of the step modules to the tool dialog."""
-    def __init__(self):
+class _Tee:
+    """Send every print() from the step modules to BOTH the ArcGIS tool dialog
+    (arcpy.AddMessage) and a persistent .log file, line by line."""
+    def __init__(self, logfile=None):
         self._buf = ""
+        self._fh = logfile
     def write(self, s):
         self._buf += s
         while "\n" in self._buf:
             line, self._buf = self._buf.split("\n", 1)
-            arcpy.AddMessage(line)
+            try:
+                arcpy.AddMessage(line)
+            except Exception:
+                pass
+            if self._fh:
+                try:
+                    self._fh.write(line + "\n"); self._fh.flush()
+                except Exception:
+                    pass
     def flush(self):
         if self._buf:
-            arcpy.AddMessage(self._buf)
+            try:
+                arcpy.AddMessage(self._buf)
+            except Exception:
+                pass
+            if self._fh:
+                try:
+                    self._fh.write(self._buf)
+                except Exception:
+                    pass
             self._buf = ""
+
+
+def _open_log(out_dir, name):
+    """Create <out_dir>/<name>.log and return an open file handle (or None)."""
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+        import time as _t
+        path = os.path.join(out_dir, f"{name}_{_t.strftime('%Y%m%d_%H%M%S')}.log")
+        fh = open(path, "w", encoding="utf-8")
+        arcpy.AddMessage(f"Log file: {path}")
+        return fh
+    except Exception as e:
+        arcpy.AddWarning(f"Could not create log file: {e}")
+        return None
 
 
 def _install_parquet_fallback():
@@ -182,31 +214,37 @@ class STARRBaselineTool(object):
 
         run_id_full = run_id_base
 
-        # imports + I/O setup ---------------------------------------------------
-        sys.path.insert(0, _HERE)
-        sys.path.insert(0, _STEPS)
-        backend = _install_parquet_fallback()
-        gio = _load("starr_geo_io", "starr_geo_io.py")
-        s02 = _load("s02", "02_STARR_matching_data_weights.py", _STEPS)
-        s03 = _load("s03", "03_STARR_twin_test_selection.py", _STEPS)
-        s05 = _load("s05", "05_STARR_baseline_confidence_interval_UNCBSL.py", _STEPS)
-
-        # matching parameters (fresh process — plain attribute set is enough)
-        s02.K_NEIGHBOURS = k_neighbours
-        s02.KNN_QUERY_CANDIDATES = knn_candidates
-        s02.N_DONOR_SAMPLE = (None if n_donor <= 0 else n_donor)
-
         out_dir = os.path.join(out_root, "STARR_outputs", run_id_full)
         d01 = os.path.join(out_dir, "01_extract")
         os.makedirs(d01, exist_ok=True)
 
+        sys.path.insert(0, _HERE)
+        sys.path.insert(0, _STEPS)
+
+        # logging FIRST (before imports), tee'd to the dialog and a .log file, so
+        # even an import error is captured.
         old_stdout = sys.stdout
-        sys.stdout = _StdoutToArcpy()
+        logfh = _open_log(out_dir, "STARR_run")
+        sys.stdout = _Tee(logfh)
         try:
             arcpy.AddMessage("=" * 64)
             arcpy.AddMessage(f"STARR SEMDB | {project_name} | {run_id_full}")
-            arcpy.AddMessage(f"Parquet backend: {backend}")
             arcpy.AddMessage("=" * 64)
+
+            backend = _install_parquet_fallback()
+            arcpy.AddMessage(f"Parquet backend: {backend}")
+            gio = _load("starr_geo_io", "starr_geo_io.py")
+            s02 = _load("s02", "02_STARR_matching_data_weights.py", _STEPS)
+            s03 = _load("s03", "03_STARR_twin_test_selection.py", _STEPS)
+            s05 = _load("s05", "05_STARR_baseline_confidence_interval_UNCBSL.py", _STEPS)
+            _sk = getattr(s02.NearestNeighbors, "__module__", "") != "_sklearn_fallback"
+            arcpy.AddMessage(f"Modules loaded (scikit-learn present: {_sk}; "
+                             f"else numpy/scipy fallback — identical results).")
+
+            # matching parameters (fresh process — plain attribute set is enough)
+            s02.K_NEIGHBOURS = k_neighbours
+            s02.KNN_QUERY_CANDIDATES = knn_candidates
+            s02.N_DONOR_SAMPLE = (None if n_donor <= 0 else n_donor)
 
             # ── STEP 01 — covariate extraction (GDAL) ─────────────────────────
             arcpy.AddMessage("\n[STEP 01] Reading covariate rasters (GDAL)...")
@@ -290,12 +328,19 @@ class STARRBaselineTool(object):
 
             arcpy.AddMessage("\nDONE. Outputs in: " + out_dir)
         except Exception as e:
+            try: sys.stdout.flush()
+            except Exception: pass
             sys.stdout = old_stdout
             arcpy.AddError("STARR tool failed: " + str(e))
             arcpy.AddError(traceback.format_exc())
             raise
         finally:
+            try: sys.stdout.flush()
+            except Exception: pass
             sys.stdout = old_stdout
+            try:
+                if logfh: logfh.close()
+            except Exception: pass
         return
 
 
@@ -372,17 +417,19 @@ class STARRStep05Tool(object):
         raster_units = sval("raster_units") or "AGB_Mg_ha"
 
         sys.path.insert(0, _HERE); sys.path.insert(0, _STEPS)
-        backend = _install_parquet_fallback()
-        gio = _load("starr_geo_io", "starr_geo_io.py")
-        s05 = _load("s05", "05_STARR_baseline_confidence_interval_UNCBSL.py", _STEPS)
+        d05 = os.path.join(run_folder, "05_baseline_CI_UNCBSL")
 
         old_stdout = sys.stdout
-        sys.stdout = _StdoutToArcpy()
+        logfh = _open_log(d05, "STARR_step05")
+        sys.stdout = _Tee(logfh)
         try:
             arcpy.AddMessage("=" * 64)
             arcpy.AddMessage(f"STARR — Step 05 only | {project_name} | {run_id}")
-            arcpy.AddMessage(f"Parquet backend: {backend}")
             arcpy.AddMessage("=" * 64)
+            backend = _install_parquet_fallback()
+            arcpy.AddMessage(f"Parquet backend: {backend}")
+            gio = _load("starr_geo_io", "starr_geo_io.py")
+            s05 = _load("s05", "05_STARR_baseline_confidence_interval_UNCBSL.py", _STEPS)
 
             s05.sample_raster_values = gio.sample_raster_values
             s05.raster_pixel_area_ha = gio.raster_pixel_area_ha
@@ -411,12 +458,19 @@ class STARRStep05Tool(object):
                     arcpy.AddMessage(f"    {kk}: {summ[kk]}")
             arcpy.AddMessage("\nDONE. Outputs in: " + d05)
         except Exception as e:
+            try: sys.stdout.flush()
+            except Exception: pass
             sys.stdout = old_stdout
             arcpy.AddError("STARR Step 05 tool failed: " + str(e))
             arcpy.AddError(traceback.format_exc())
             raise
         finally:
+            try: sys.stdout.flush()
+            except Exception: pass
             sys.stdout = old_stdout
+            try:
+                if logfh: logfh.close()
+            except Exception: pass
         return
 
 

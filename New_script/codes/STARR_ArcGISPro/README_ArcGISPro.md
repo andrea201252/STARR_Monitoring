@@ -24,12 +24,23 @@ downstream number is produced by the unchanged Step 05 code.
 
 ## Requirements
 
-- ArcGIS Pro 3.x (uses its bundled Python `arcgispro-py3`: numpy, pandas,
-  scikit-learn, scipy, matplotlib, GDAL/osgeo, pyproj — all already present).
-- **Spatial Analyst** is only needed if you use the optional donor
-  shapefile filters via raster masking; the default point-in-polygon filter uses
-  core arcpy (no extension).
+- ArcGIS Pro 3.x, using its bundled Python `arcgispro-py3`. Needs only packages
+  that are **always present**: numpy, pandas, scipy, matplotlib, GDAL/osgeo, pyproj.
+- **scikit-learn is NOT required.** Step 02 uses it if present; if it is missing
+  (as on many ArcGIS installs) the toolbox automatically falls back to
+  `steps/_sklearn_fallback.py` — numpy/scipy drop-ins for `StandardScaler`,
+  `LedoitWolf` and `NearestNeighbors` that reproduce scikit-learn **identically**
+  (validated: Ledoit-Wolf covariance bit-identical, same k-NN neighbours). No
+  installation needed either way. The run log states which path was used.
+- No extension is required (the default donor point-in-polygon filter uses core arcpy).
 - The GEE covariate/AGB GeoTIFFs (produced by the unchanged `Covariate_Extraction.js`).
+
+## Logs
+
+Every step's console output is shown live in the tool dialog **and** written to a
+timestamped `.log` file in the output folder (`STARR_run_*.log`, or
+`STARR_step05_*.log` for the Step-05-only tool), so you always have the full log
+even after the dialog closes.
 
 ## Install
 

@@ -47,9 +47,18 @@ import matplotlib
 import matplotlib.pyplot as plt
 
 from scipy.linalg import cholesky as scipy_cholesky
-from sklearn.neighbors import NearestNeighbors
-from sklearn.preprocessing import StandardScaler
-from sklearn.covariance import LedoitWolf
+try:
+    from sklearn.neighbors import NearestNeighbors
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.covariance import LedoitWolf
+except ImportError:
+    # ArcGIS Pro Python without scikit-learn: numpy/scipy drop-ins that reproduce
+    # StandardScaler / LedoitWolf / NearestNeighbors identically (validated against
+    # scikit-learn). Requires the package folder (steps/) on sys.path — the
+    # toolbox adds it before loading this module.
+    import os as _os, sys as _sys
+    _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+    from _sklearn_fallback import NearestNeighbors, StandardScaler, LedoitWolf
 
 
 def _is_notebook():
