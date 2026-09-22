@@ -1,28 +1,28 @@
 # -*- coding: utf-8 -*-
 """
 GS STARR Track 1 SEMDB — 00b_STARR_compare_extents.py
-Runner di confronto multi-extent.
+Multi-extent comparison runner.
 
-Esegue la pipeline Steps 01-04 per ogni extent in COMPARE_EXTENTS,
-aggrega le metriche dai JSON prodotti da ogni step e genera:
-  - comparison_summary.json   → tutte le metriche per extent
-  - comparison_plots.png      → 4 panel comparativi
-  - recommendation.txt        → extent minimo sufficiente
+Runs the Steps 01-04 pipeline for each extent in COMPARE_EXTENTS,
+aggregates the metrics from the JSON produced by each step and generates:
+  - comparison_summary.json   → all the metrics per extent
+  - comparison_plots.png      → 4 comparison panels
+  - recommendation.txt        → minimum sufficient extent
 
-Utilizzo
---------
+Usage
+-----
   python 00b_STARR_compare_extents.py
 
-Oppure da notebook:
+Or from a notebook:
   import importlib.util, pathlib
   m = importlib.util.spec_from_file_location(
         "s00b", pathlib.Path("00b_STARR_compare_extents.py"))
   s00b = importlib.util.module_from_spec(m); m.loader.exec_module(s00b)
   results = s00b.run_comparison()
 
-Criteri di sufficienza (tutti e 4 devono essere soddisfatti)
+Sufficiency criteria (all 4 must be satisfied)
 ─────────────────────────────────────────────────────────────
-  n_donor / n_project ≥ 3     (linea guida STARR)
+  n_donor / n_project ≥ 3     (STARR guideline)
   match_coverage_pct  ≥ 90%   (Step 02)
   twin_pass_pct       ≥ 30%   (Step 03)
   smd_max             ≤ 0.10  (Step 02)
@@ -49,25 +49,23 @@ HERE = Path(__file__).resolve().parent
 # CONFIG
 # ══════════════════════════════════════════════════════════════════════
 
-# Estensioni da confrontare — "full" + km numerici
+# Extents to compare — "full" + numeric km
 COMPARE_EXTENTS: list = ["full", 5, 10, 20, 30]
 
-# Directory base dove trovare i TIF e dove scrivere i risultati
+# Base directory where to find the TIFs and where to write the results
 BASE_DIR_CANDIDATES = []
 
 
-# Soglie di sufficienza
+# Sufficiency thresholds
 THRESH_RATIO_3X       = 3.0
 THRESH_MATCH_COV_PCT  = 90.0
-# GS STARR NON richiede una % minima di coppie che passano il parallel test:
-# 0.0 = criterio disattivato (il valore resta mostrato, ma non fa più da gate).
-THRESH_TWIN_PASS_PCT  = 0.0
+THRESH_TWIN_PASS_PCT  = 30.0
 THRESH_SMD_MAX        = 0.10
 
-# Struttura cartelle di output — CONFIGURABILE DAL NOTEBOOK.
+# Output folder structure — CONFIGURABLE FROM THE NOTEBOOK.
 # Path: <base_dir> / OUTPUTS_DIRNAME / COMPARISON_DIRNAME
-# Modo consigliato: os.environ["STARR_OUTPUTS_DIRNAME"] = "..." in cima al
-# notebook, PRIMA di caricare i moduli (vale anche per gli step 01-05).
+# Recommended way: os.environ["STARR_OUTPUTS_DIRNAME"] = "..." at the top of the
+# notebook, BEFORE loading the modules (also applies to steps 01-05).
 OUTPUTS_DIRNAME    = os.environ.get("STARR_OUTPUTS_DIRNAME", "STARR_outputs")
 COMPARISON_DIRNAME = "comparison"
 
@@ -95,7 +93,7 @@ def load_module(filename: str, name: str):
     return mod
 
 
-# ── ESTRAZIONE METRICHE ───────────────────────────────────────────────
+# ── METRICS EXTRACTION ─────────────────────────────────────────────────
 
 def _load_json(path: Path) -> dict:
     if path.exists():
@@ -106,8 +104,8 @@ def _load_json(path: Path) -> dict:
 
 def extract_metrics(run_result: dict) -> dict:
     """
-    Estrae metriche aggregate leggendo i JSON di ogni step.
-    Usa i path in run_result["summary"] come punto di partenza.
+    Extracts aggregated metrics by reading the JSON of each step.
+    Uses the paths in run_result["summary"] as a starting point.
     """
     s = run_result.get("summary", {})
 
@@ -134,8 +132,8 @@ def extract_metrics(run_result: dict) -> dict:
     n_twin      = int(rep03.get("selected_pairs", s.get("twin_pass_n", 0)))
     smd_max     = float(rep02.get("SMD_max", s.get("smd_max") or 9.99))
 
-    # A2: usa il rapporto 3× basato sull'AREA (corretto) se disponibile,
-    # con fallback al proxy sui conteggi.
+    # A2: use the 3× ratio based on AREA (correct) if available,
+    # with fallback to the count-based proxy.
     ratio_area  = rep01.get("ratio_donor_project_area")
     ratio_count = n_donor / max(n_project, 1)
     ratio       = float(ratio_area) if ratio_area is not None else ratio_count
@@ -145,7 +143,7 @@ def extract_metrics(run_result: dict) -> dict:
     ref_ha      = float(rep04.get("reference_area_definition", {})
                         .get("total_ha", s.get("reference_area_ha", 0)))
 
-    # Criteri di sufficienza
+    # Sufficiency criteria
     ok_ratio  = (rep01.get("meets_3x_guideline_area")
                  if rep01.get("meets_3x_guideline_area") is not None
                  else ratio >= THRESH_RATIO_3X)
@@ -153,7 +151,7 @@ def extract_metrics(run_result: dict) -> dict:
     ok_match  = match_cov >= THRESH_MATCH_COV_PCT
     ok_twin   = twin_pct  >= THRESH_TWIN_PASS_PCT
     ok_smd    = smd_max   <= THRESH_SMD_MAX
-    # B4: il twin deve essere conforme, non solo "selezionato".
+    # B4: the twin must be compliant, not just "selected".
     twin_compliant = bool(rep03.get("twin_test_compliant",
                                     rep03.get("aggregate_twin_passed", False)))
     sufficient = ok_ratio and ok_match and ok_twin and ok_smd and twin_compliant
@@ -192,12 +190,12 @@ def extract_metrics(run_result: dict) -> dict:
     }
 
 
-# ── VERIFICA SUFFICIENZA ──────────────────────────────────────────────
+# ── SUFFICIENCY CHECK ─────────────────────────────────────────────────
 
 def find_minimum_sufficient_extent(metrics_list: list[dict]) -> dict | None:
     """
-    Restituisce il primo extent (in ordine crescente) che soddisfa
-    tutti e 4 i criteri. "full" viene trattato come +∞.
+    Returns the first extent (in ascending order) that satisfies
+    all 4 criteria. "full" is treated as +∞.
     """
     def sort_key(m):
         e = m["extent_km"]
@@ -210,7 +208,7 @@ def find_minimum_sufficient_extent(metrics_list: list[dict]) -> dict | None:
     return None
 
 
-# ── GRAFICI ───────────────────────────────────────────────────────────
+# ── PLOTS ─────────────────────────────────────────────────────────────
 
 def _extent_label(e) -> str:
     return "FULL" if e == "full" else f"{e}km"
@@ -223,12 +221,12 @@ def _criterion_color(ok: bool) -> str:
 def plot_comparison(metrics_list: list[dict],
                     out_path: Path | None = None) -> plt.Figure:
     """
-    4 panel comparativi:
-      A — n_donor + soglia ratio 3×
-      B — match_coverage_pct + soglia 90%
-      C — twin_pass_pct + soglia 30%
-      D — smd_max + soglia 0.10
-    Più una riga inferiore con la heatmap criteri per extent.
+    4 comparison panels:
+      A — n_donor + 3× ratio threshold
+      B — match_coverage_pct + 90% threshold
+      C — twin_pass_pct + 30% threshold
+      D — smd_max + 0.10 threshold
+    Plus a bottom row with the per-extent criteria heatmap.
     """
     labels   = [_extent_label(m["extent_km"]) for m in metrics_list]
     x        = np.arange(len(labels))
@@ -308,7 +306,7 @@ def plot_comparison(metrics_list: list[dict],
     for xi, v in zip(x, vals):
         ax.text(xi, v, f"{v:.3f}", ha="center", va="bottom", fontsize=7)
 
-    # ── Riga inferiore: heatmap criteri ───────────────────────────────
+    # ── Bottom row: criteria heatmap ──────────────────────────────────
     ax2 = fig.add_subplot(gs[1, :])
     criteria_keys = ["ratio_3x", "match_cov_90pct",
                      "twin_pass_30pct", "twin_compliant", "smd_le_010", "ALL_SUFFICIENT"]
@@ -335,7 +333,7 @@ def plot_comparison(metrics_list: list[dict],
     ax2.set_title("Sufficiency criteria heatmap by extent",
                   fontsize=9, fontweight="bold")
 
-    # Evidenzia extent minimo sufficiente
+    # Highlight the minimum sufficient extent
     min_suff = find_minimum_sufficient_extent(metrics_list)
     if min_suff:
         min_label = _extent_label(min_suff["extent_km"])
@@ -374,34 +372,34 @@ def run_comparison(extents: list | None = None,
                    use_eligibility: bool = True,
                    outputs_dirname: str | None = None) -> dict:
     """
-    Esegue la pipeline Steps 01-04 per ogni extent e aggrega i risultati.
+    Runs the Steps 01-04 pipeline for each extent and aggregates the results.
 
-    Parametri
-    ---------
+    Parameters
+    ----------
     extents : list | None
-        Lista di estensioni. Default = COMPARE_EXTENTS.
+        List of extents. Default = COMPARE_EXTENTS.
     base_dirs : list | None
-        Directory base. Default = BASE_DIR_CANDIDATES.
+        Base directory. Default = BASE_DIR_CANDIDATES.
     output_dir : path | None
-        Dove salvare comparison_summary.json e comparison_plots.png.
+        Where to save comparison_summary.json and comparison_plots.png.
         Default: base_dir / STARR_outputs / comparison.
     run_step_05 : bool
-        Se True esegue anche Step 05 (richiede dati carbon-stock).
+        If True also runs Step 05 (requires carbon-stock data).
     run_id_base : str | None
-        Prefisso dei TIF GEE (es. "Idiofa_Lobi_2018_buf50km_...").
-        None / "" = wildcard (trova tutti i TIF nella cartella).
+        Prefix of the GEE TIFs (e.g. "Idiofa_Lobi_2018_buf50km_...").
+        None / "" = wildcard (finds all the TIFs in the folder).
     fnf_shapefile : str | None
-        Percorso shapefile FNF18. None = filtro disattivato.
+        Path of the FNF18 shapefile. None = filter disabled.
     eligible_shapefile : str | None
-        Percorso shapefile Eligible_FNF. None = filtro disattivato.
+        Path of the Eligible_FNF shapefile. None = filter disabled.
     use_eligibility : bool
-        Se True (default) applica il filtro Eligible_FNF al donor
-        (conservativo). Se False il donor usa l'intera area non-forest.
+        If True (default) applies the Eligible_FNF filter to the donor
+        (conservative). If False the donor uses the entire non-forest area.
 
-    Restituisce
-    -----------
+    Returns
+    -------
     dict {
-        "metrics": [dict per ogni extent],
+        "metrics": [dict per each extent],
         "minimum_sufficient": dict | None,
         "recommendation": str,
         "output_dir": str,
@@ -471,7 +469,7 @@ def run_comparison(extents: list | None = None,
 
         gc.collect()
 
-    # ── Trovare extent minimo sufficiente ─────────────────────────────
+    # ── Find the minimum sufficient extent ────────────────────────────
     min_suff = find_minimum_sufficient_extent(metrics_list)
 
     if min_suff:
@@ -507,7 +505,7 @@ def run_comparison(extents: list | None = None,
         fig = plot_comparison(
             valid_m, out_path=out_dir / "comparison_plots.png")
 
-    # ── Salvataggio ───────────────────────────────────────────────────
+    # ── Saving ────────────────────────────────────────────────────────
     summary_out = {
         "timestamp_utc":       datetime.now(timezone.utc).isoformat(),
         "extents_tested":      extents,

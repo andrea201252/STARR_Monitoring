@@ -2,19 +2,19 @@
 """
 ============================================================
 GS STARR – Track 1 SEMDB | 04_STARR_reference_area_lock.py
-STEP 04 — Reference Area su supporto Pixel/Block + Lock
+STEP 04 — Reference Area on Pixel/Block support + Lock
 ============================================================
 
-Principali modifiche rispetto alla versione precedente:
-  - La RA finale non è un inviluppo smussato di default.
-  - I donor pixel matchati vengono convertiti in celle di supporto quadrate da 30 m.
-  - L'output può rimanere MultiPolygon. Questo è intenzionale e più difendibile di
-    un grande inviluppo semplificato che include molti donor pixel non validati.
-  - La modalità block opzionale può aggregare i pixel matchati in block regolari più grandi.
-  - I punti di monitoraggio usano di default i centri dei donor pixel matchati. Una griglia
-    da 500 m su celle da 30 m disconnesse di solito non è utile.
+Main changes compared to the previous version:
+  - The final RA is not a smoothed envelope by default.
+  - The matched donor pixels are converted into 30 m square support cells.
+  - The output can remain a MultiPolygon. This is intentional and more defensible than
+    a large simplified envelope that includes many non-validated donor pixels.
+  - The optional block mode can aggregate the matched pixels into larger regular blocks.
+  - The monitoring points use by default the centres of the matched donor pixels. A 500 m grid
+    over disconnected 30 m cells is usually not useful.
 
-Output di default:
+Default output:
   reference_area_FINAL.gpkg/shp/geojson
   matched_donor_pixels.gpkg
   reference_area_support_cells.gpkg
@@ -59,30 +59,30 @@ if not _is_notebook():
 
 
 # ================================================================
-# PARAMETRI UTENTE
+# USER PARAMETERS
 # ================================================================
 
-# "pixel" = ogni donor pixel matchato diventa una cella di supporto da 30 m.
-# "block" = i donor pixel matchati vengono agganciati a celle regolari BLOCK_SIZE_M.
+# "pixel" = each matched donor pixel becomes a 30 m support cell.
+# "block" = the matched donor pixels are snapped to regular BLOCK_SIZE_M cells.
 RA_SUPPORT_MODE = "pixel"
 PIXEL_SIZE_M = 30.0
 BLOCK_SIZE_M = 150.0
 
-# Mantenere questi a 0 per la conformità finale. Aumentare solo se si desidera
-# esplicitamente una generalizzazione cartografica e quindi rivalidare tutti i pixel dentro la RA.
+# Keep these at 0 for final compliance. Increase only if you explicitly want
+# a cartographic generalization and therefore to re-validate all pixels inside the RA.
 EDGE_BUFFER_M = 0.0
 CLOSE_GAPS_M = 0.0
 SIMPLIFY_TOL_M = 0.0
 MIN_POLYGON_HA = 0.0
 
-# "matched_pixels" è robusto per supporto pixel/block disconnesso.
-# "grid" crea una griglia sistematica dentro la RA e può restituire zero punti se
-# la RA è un insieme di celle da 30 m disconnesse.
+# "matched_pixels" is robust for disconnected pixel/block support.
+# "grid" creates a systematic grid inside the RA and can return zero points if
+# the RA is a set of disconnected 30 m cells.
 MONITORING_MODE = "matched_pixels"
 MONITORING_SPACING_M = 500.0
 MONITORING_SEED = 42
 
-# Export vettoriali extra. Il formato di audit canonico è GPKG; lo SHP è aggiunto per interoperabilità GIS.
+# Extra vector exports. The canonical audit format is GPKG; SHP is added for GIS interoperability.
 EXPORT_SUPPORT_CELLS_SHP = True
 EXPORT_MATCHED_POINTS_SHP = True
 EXPORT_MONITORING_POINTS_SHP = True
@@ -91,13 +91,13 @@ EXPORT_NATIVE_MATCHED_CELLS_SHP = True
 
 CRS_GEO = "EPSG:4326"
 
-# Sottocartella di output di questo step — EDITABILE DAL NOTEBOOK (s04.STEP_DIRNAME).
-# Il livello OUTPUTS_DIRNAME/<RUN_ID> è ereditato dal path di Step 01/02/03.
+# Output subfolder of this step — EDITABLE FROM THE NOTEBOOK (s04.STEP_DIRNAME).
+# The OUTPUTS_DIRNAME/<RUN_ID> level is inherited from the Step 01/02/03 path.
 STEP_DIRNAME = "04_reference_area_lock"
 
 
 # ================================================================
-# FUNZIONI IO
+# IO FUNCTIONS
 # ================================================================
 
 def sha256_file(path):
@@ -202,7 +202,7 @@ def detect_cont_covs(meta, df):
 
 
 # ================================================================
-# GEODATAFRAME / CELLE DI SUPPORTO
+# GEODATAFRAME / SUPPORT CELLS
 # ================================================================
 
 def make_points_gdf(df):
@@ -215,9 +215,9 @@ def make_points_gdf(df):
 
     df_u = df.drop_duplicates(subset=[lon_col, lat_col]).reset_index(drop=True)
 
-    # P2 FIX: i pixel PA senza un match donor valido portano NaN nelle coordinate
-    # ref_lon/ref_lat (e nei ref_cell_*). points_from_xy + to_crs falliscono su NaN.
-    # Scartiamo qui le righe non-finite, registrando quante.
+    # P2 FIX: PA pixels without a valid donor match carry NaN in the
+    # ref_lon/ref_lat coordinates (and in the ref_cell_*). points_from_xy + to_crs fail on NaN.
+    # We discard the non-finite rows here, recording how many.
     n_before = len(df_u)
     coord_ok = np.isfinite(df_u[lon_col].to_numpy()) & np.isfinite(df_u[lat_col].to_numpy())
     df_u = df_u.loc[coord_ok].reset_index(drop=True)
@@ -249,8 +249,8 @@ def build_support_cells(points_gdf, mode=RA_SUPPORT_MODE):
     if mode not in {"pixel", "block"}:
         raise ValueError("RA_SUPPORT_MODE must be 'pixel' or 'block'.")
 
-    # Modalità di audit preferita: usa i bounds nativi della cella raster propagati da Step 01 → Step 02 → Step 03.
-    # Questo evita di ricostruire un quadrato da 30 m a partire da un punto lon/lat riproiettato.
+    # Preferred audit mode: use the native raster cell bounds propagated from Step 01 → Step 02 → Step 03.
+    # This avoids rebuilding a 30 m square starting from a reprojected lon/lat point.
     if mode == "pixel" and _has_native_ref_bounds(points_gdf):
         geoms = []
         attrs = []
@@ -320,7 +320,7 @@ def build_reference_area(points_gdf, support_gdf, meta=None):
     if geom is None or geom.is_empty:
         raise RuntimeError("Reference Area empty after post-processing.")
 
-    # Filtro opzionale sulla dimensione dei poligoni. Il default è 0, ovvero mantenere tutti i support matchati validi.
+    # Optional filter on polygon size. The default is 0, i.e. keep all valid matched supports.
     if MIN_POLYGON_HA > 0 and geom.geom_type == "MultiPolygon":
         polys = [p for p in geom.geoms if p.area / 10000.0 >= MIN_POLYGON_HA]
         if not polys:
@@ -329,16 +329,16 @@ def build_reference_area(points_gdf, support_gdf, meta=None):
         method_parts.append(f"min_poly_{MIN_POLYGON_HA:g}ha")
 
     area_ha = float(geom.area / 10000.0)
-    # PERF: conteggio punti-dentro-RA vettorizzato (STRtree/sjoin) invece di
-    # un loop Python geom.contains(p) per ogni punto (O(N) ops shapely su un
-    # MultiPolygon potenzialmente enorme → collo di bottiglia con ~150k punti).
+    # PERF: vectorized points-inside-RA count (STRtree/sjoin) instead of
+    # a Python loop geom.contains(p) for each point (O(N) shapely ops on a
+    # potentially huge MultiPolygon → bottleneck with ~150k points).
     try:
         ra_gdf = gpd.GeoDataFrame(geometry=[geom], crs=points_gdf.crs)
         joined = gpd.sjoin(points_gdf[["geometry"]], ra_gdf,
                            how="inner", predicate="intersects")
         n_in = int(joined.index.nunique())
     except Exception:
-        # Fallback robusto: usa STRtree direttamente
+        # Robust fallback: use STRtree directly
         try:
             from shapely import STRtree
             tree = STRtree(list(points_gdf.geometry))
@@ -370,7 +370,7 @@ def build_reference_area(points_gdf, support_gdf, meta=None):
 
 
 # ================================================================
-# PUNTI DI MONITORAGGIO
+# MONITORING POINTS
 # ================================================================
 
 def monitoring_points(bounds_gdf, points_gdf, meta=None):
@@ -433,7 +433,7 @@ def monitoring_points(bounds_gdf, points_gdf, meta=None):
 
 
 # ================================================================
-# RIEPILOGHI / DIAGNOSTICA
+# SUMMARIES / DIAGNOSTICS
 # ================================================================
 
 def cov_summary(df, cont_covs):
@@ -457,8 +457,8 @@ def cov_summary(df, cont_covs):
 
 
 def diagnostics_plot(points_gdf, support_gdf, bounds_gdf, mon_gdf, out_dir=None):
-    # Overlay PA: pixel di progetto associati ai match (proj_lon/proj_lat, se presenti),
-    # riproiettati nel CRS metrico del plot. Mostra DOVE sta la PA rispetto alla RA.
+    # PA overlay: project pixels associated with the matches (proj_lon/proj_lat, if present),
+    # reprojected into the metric CRS of the plot. Shows WHERE the PA is relative to the RA.
     proj_pts = None
     if {"proj_lon", "proj_lat"}.issubset(points_gdf.columns):
         _pp = points_gdf[["proj_lon", "proj_lat"]].dropna()
@@ -504,14 +504,14 @@ def diagnostics_plot(points_gdf, support_gdf, bounds_gdf, mon_gdf, out_dir=None)
 
 
 def build_native_matched_cells(points_gdf):
-    """Restituisce le celle reference matchate come footprint raster nativi quando disponibili."""
+    """Returns the matched reference cells as native raster footprints when available."""
     if not _has_native_ref_bounds(points_gdf):
         return None
     geoms = []
     rows = []
     _bcols = ["ref_cell_xmin", "ref_cell_ymin", "ref_cell_xmax", "ref_cell_ymax"]
     for i, row in points_gdf.reset_index(drop=True).iterrows():
-        # P2: salta righe con bounds nativi NaN (pixel non matchati)
+        # P2: skip rows with NaN native bounds (unmatched pixels)
         if not all(pd.notna(row.get(c, np.nan)) for c in _bcols):
             continue
         try:
@@ -669,15 +669,15 @@ def export_and_lock(bounds_gdf, support_gdf, mon_gdf, points_gdf, df_u, twin_rep
 
 
 # ================================================================
-# STEP PRINCIPALE
+# MAIN STEP
 # ================================================================
 
 def run_reference_area_lock(base_dirs=None, output_dir=None, passed_df=None, meta=None,
                             twin_report=None, verbose=True):
-    """Restituisce: bounds_gdf, mon_gdf, fig_diag, out_dir, manifest
+    """Returns: bounds_gdf, mon_gdf, fig_diag, out_dir, manifest
 
-    Se il twin test NON è conforme (twin_test_compliant=False nel report Step 03)
-    Step 04 si ferma: vanno usati solo i pixel conformi, non esiste alcun override.
+    If the twin test is NOT compliant (twin_test_compliant=False in the Step 03 report)
+    Step 04 stops: only compliant pixels must be used, there is no override.
     """
     if base_dirs is None:
         raise RuntimeError(
@@ -702,8 +702,8 @@ def run_reference_area_lock(base_dirs=None, output_dir=None, passed_df=None, met
         rp = base_dirs[0] / "twin_test_report.json"
         twin_report = json.load(open(rp, encoding="utf-8")) if rp.exists() else {}
 
-    # B4 fix: blocca se il twin test non è conforme. Vanno usati solo i pixel
-    # conformi, quindi non è previsto alcun override.
+    # B4 fix: block if the twin test is not compliant. Only compliant pixels
+    # must be used, so no override is provided.
     twin_compliant = twin_report.get("twin_test_compliant", None)
     if twin_compliant is False:
         raise RuntimeError(

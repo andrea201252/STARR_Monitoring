@@ -1,18 +1,18 @@
 # -*- coding: utf-8 -*-
 """
 GS STARR – Track 1 SEMDB | 03_STARR_twin_test_selection.py
-STEP 03 — Test Aggregato Trend Parallelo / Twin Test
-[v2 — OLS vettorizzato + make_long veloce + singola costruzione long_df nel loop iterativo]
+STEP 03 — Aggregate Parallel Trend Test / Twin Test
+[v2 — vectorized OLS + fast make_long + single long_df construction in the iterative loop]
 
-Modifiche rispetto a v1
+Changes with respect to v1
 ───────────────────────
-PERF 1  _ols_vectorized: sostituito il loop Python per-pixel con un broadcast
-         numpy completo; gestisce le maschere NaN per-riga tramite somma mascherata.
-         100-1000× più veloce per grandi set di coppie.
-PERF 2  make_long_for_interaction: sostituito il loop Python + 20× pd.concat con
-         numpy np.repeat/np.tile e un singolo costruttore DataFrame.
-PERF 3  select_pairs_with_parallel_trend: costruisce valid_long_df una sola volta;
-         il loop iterativo sulla frazione filtra con np.isin invece di ricostruire.
+PERF 1  _ols_vectorized: replaced the per-pixel Python loop with a full
+         numpy broadcast; handles per-row NaN masks via masked sum.
+         100-1000× faster for large sets of pairs.
+PERF 2  make_long_for_interaction: replaced the Python loop + 20× pd.concat with
+         numpy np.repeat/np.tile and a single DataFrame constructor.
+PERF 3  select_pairs_with_parallel_trend: builds valid_long_df only once;
+         the iterative loop over the fraction filters with np.isin instead of rebuilding.
 """
 
 import warnings
@@ -44,37 +44,23 @@ if not _is_notebook():
 
 
 # ================================================================
-# PARAMETRI
+# PARAMETERS
 # ================================================================
 
 PVALUE_THRESHOLD      = 0.05
 PAIR_SLOPE_DIFF_MAX   = 0.005
-
-# Frazione MINIMA di coppie che la selezione del parallel-trends test deve
-# mantenere. GS STARR NON richiede una frazione minima (chiede solo trend
-# paralleli p>0.05 sui pixel selezionati): quindi 0.0 = nessun pavimento sul %.
-# Il solo limite rimasto è MIN_SELECTED_PAIRS (minimo ASSOLUTO di coppie, per
-# validità statistica — non una percentuale).
-MIN_SELECTED_FRACTION = 0.0
+MIN_SELECTED_FRACTION = 0.30
 MIN_SELECTED_PAIRS    = 30
-
-# Ricerca iterativa: frazioni esplorate (dal 95% giù). Generata da config, non
-# più hard-coded con pavimento al 30%. Il minimo assoluto di coppie resta
-# garantito da MIN_SELECTED_PAIRS.
-SELECTION_FRAC_MAX  = 0.95
-SELECTION_FRAC_MIN  = 0.05
-SELECTION_FRAC_STEP = 0.05
-
 GRID_N_EXAMPLES       = 16
 GRID_SEED             = 42
 
-# Sottocartella di output di questo step — EDITABILE DAL NOTEBOOK (s03.STEP_DIRNAME).
-# Il livello OUTPUTS_DIRNAME/<RUN_ID> è ereditato dal path di Step 01/02.
+# Output subfolder for this step — EDITABLE FROM THE NOTEBOOK (s03.STEP_DIRNAME).
+# The OUTPUTS_DIRNAME/<RUN_ID> level is inherited from the Step 01/02 path.
 STEP_DIRNAME = "03_twin_test"
 
 
 # ================================================================
-# FUNZIONI IO
+# IO FUNCTIONS
 # ================================================================
 
 def load_df(path):
@@ -99,21 +85,21 @@ def years_from_cols(ndvi_year_cols):
 
 
 # ================================================================
-# OLS — completamente vettorizzato (PERF 1)
+# OLS — fully vectorized (PERF 1)
 # ================================================================
 
 def _ols_vectorized(Y, years, min_valid):
     """
-    OLS vettorizzato: slope, p-value, valid_count per ogni riga di Y.
-    Nessun loop Python per-riga. Gestisce i NaN per-riga tramite somma mascherata.
+    Vectorized OLS: slope, p-value, valid_count for each row of Y.
+    No per-row Python loop. Handles per-row NaNs via masked sum.
 
-    Parametri
+    Parameters
     ----------
     Y         : (n_pixels, n_years) array-like
     years     : (n_years,)
     min_valid : int
 
-    Restituisce (slopes, pvalues, valid_cnt) — ciascuno ndarray (n_pixels,)
+    Returns (slopes, pvalues, valid_cnt) — each an ndarray (n_pixels,)
     """
     years = np.asarray(years, dtype=np.float64)
     Y     = np.asarray(Y,     dtype=np.float64)
@@ -123,7 +109,7 @@ def _ols_vectorized(Y, years, min_valid):
     valid_cnt = finite.sum(axis=1)          # (n_px,)
     ok_px     = valid_cnt >= int(min_valid)
 
-    # Azzera le posizioni non valide per somme vettorizzate sicure
+    # Zero out invalid positions for safe vectorized sums
     Y_s  = np.where(finite, Y,                  0.0)
     yr_s = np.where(finite, years[np.newaxis,:], 0.0)
 
@@ -153,7 +139,7 @@ def _ols_vectorized(Y, years, min_valid):
     se     = np.sqrt(np.maximum(se_sq, 0.0))
     t_stat = np.where(se > 1e-15, slopes/se, 0.0)
 
-    # scipy.stats.t.sf accetta array
+    # scipy.stats.t.sf accepts arrays
     pvalues = np.where(
         valid_ok,
         2.0 * stats.t.sf(np.abs(t_stat), df=np.maximum(valid_cnt-2, 1)),
@@ -164,14 +150,14 @@ def _ols_vectorized(Y, years, min_valid):
 
 
 # ================================================================
-# FORMATO LONG — reshape numpy (PERF 2)
+# LONG FORMAT — numpy reshape (PERF 2)
 # ================================================================
 
 def make_long_for_interaction(df, ndvi_year_cols):
     """
-    Costruisce il DataFrame long [pair_id, year, group, ndvi].
+    Builds the long DataFrame [pair_id, year, group, ndvi].
     group=1 project, group=0 reference.
-    Nessun loop Python; nessun pd.concat; singolo costruttore DataFrame da numpy.
+    No Python loop; no pd.concat; single DataFrame constructor from numpy.
     """
     if df.empty or not ndvi_year_cols:
         return pd.DataFrame(columns=["pair_id","year","group","ndvi"])
@@ -201,7 +187,7 @@ def make_long_for_interaction(df, ndvi_year_cols):
 
 
 # ================================================================
-# TEST DI INTERAZIONE + PENDENZA APPAIATA
+# INTERACTION TEST + PAIRED SLOPE
 # ================================================================
 
 def interaction_test_from_long(long_df):
@@ -243,7 +229,7 @@ def paired_slope_test(df):
 
 
 # ================================================================
-# PREPARAZIONE DATI
+# DATA PREPARATION
 # ================================================================
 
 def attach_project_ndvi(matched_df, proj_df, ndvi_year_cols):
@@ -290,15 +276,15 @@ def compute_pair_slopes(df, ndvi_year_cols, year_list, min_valid):
 
 
 # ================================================================
-# SELEZIONE COPPIE — long_df costruito una sola volta (PERF 3)
+# PAIR SELECTION — long_df built only once (PERF 3)
 # ================================================================
 
 def select_pairs_with_parallel_trend(result_df, ndvi_year_cols):
     """
-    Parte dalla soglia fissa di differenza di pendenza delle coppie; se il test
-    aggregato fallisce, riduce iterativamente le coppie ordinate per |slope_diff|.
+    Starts from the fixed pair slope-difference threshold; if the aggregate test
+    fails, it iteratively reduces the pairs sorted by |slope_diff|.
 
-    PERF 3: valid_long_df costruito una sola volta; np.isin usato per filtrare nel loop.
+    PERF 3: valid_long_df built only once; np.isin used to filter within the loop.
     """
     min_n = max(MIN_SELECTED_PAIRS, int(len(result_df)*MIN_SELECTED_FRACTION))
     base  = result_df[result_df["ols_valid"] & result_df["pair_slope_ok"]].copy()
@@ -318,21 +304,18 @@ def select_pairs_with_parallel_trend(result_df, ndvi_year_cols):
                       "selected_fraction":float(len(base)/max(1,len(result_df))),
                       "interaction":it,"paired_slope":pt}
 
-    # Ordina i validi una volta; costruisci long_df una volta — PERF 3
+    # Sort the valid ones once; build long_df once — PERF 3
     valid               = result_df[result_df["ols_valid"]].copy().sort_values("slope_diff")
-    valid_long_full     = make_long_for_interaction(valid, ndvi_year_cols)  # costruito una sola volta
+    valid_long_full     = make_long_for_interaction(valid, ndvi_year_cols)  # built only once
     valid_pair_ids      = valid.index.to_numpy()
     valid_long_pair_arr = valid_long_full["pair_id"].to_numpy()
 
     best = None
-    # Frazioni esplorate: generate da config (niente più pavimento hard-coded al 30%).
-    search_fracs = [round(float(f), 4) for f in
-                    np.arange(SELECTION_FRAC_MAX, SELECTION_FRAC_MIN - 1e-9, -SELECTION_FRAC_STEP)]
-    for frac in search_fracs:
+    for frac in [0.95,0.90,0.85,0.80,0.75,0.70,0.65,0.60,0.55,0.50,0.45,0.40,0.35,0.30]:
         n = max(min_n, int(len(valid)*frac))
         if n > len(valid): continue
         sub_ids  = valid_pair_ids[:n]
-        mask_long = np.isin(valid_long_pair_arr, sub_ids)   # filtro veloce
+        mask_long = np.isin(valid_long_pair_arr, sub_ids)   # fast filter
         sub_long  = valid_long_full.iloc[mask_long]
         sub       = valid.iloc[:n]
         it, pt, passed = _eval(sub, sub_long)
@@ -359,7 +342,7 @@ def select_pairs_with_parallel_trend(result_df, ndvi_year_cols):
 
 
 # ================================================================
-# GRAFICI
+# PLOTS
 # ================================================================
 
 def plot_parallel_trends(result_df, passed_df, ndvi_year_cols, out_dir=None):
@@ -490,9 +473,9 @@ def run_twin_test(base_dirs=None, output_dir=None, matched_df=None,
     result["twin_pass"] = result.index.isin(passed.index)
     passed = result[result["twin_pass"]].copy().reset_index(drop=True)
 
-    # B4 fix: flag esplicito di compliance. Se il test aggregato NON passa,
-    # i pixel "selezionati" sono solo il best-available e NON dovrebbero
-    # alimentare il baseline senza decisione esplicita del PM.
+    # B4 fix: explicit compliance flag. If the aggregate test does NOT pass,
+    # the "selected" pixels are only best-available and should NOT
+    # feed the baseline without an explicit decision by the PM.
     selection_mode = selection_report["selection_mode"]
     twin_test_compliant = bool(aggregate_passed) and selection_mode in (
         "fixed_pair_slope_threshold", "iterative_smallest_slope_diff"

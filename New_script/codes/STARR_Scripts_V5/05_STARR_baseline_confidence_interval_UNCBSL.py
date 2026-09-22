@@ -2,47 +2,47 @@
 """
 ============================================================
 GS STARR – Track 1 SEMDB | 05_STARR_baseline_confidence_interval_UNCBSL.py
-STEP 05 — Baseline non aggiustata su base raster + CI90 / UNCBSL
+STEP 05 — Raster-based unadjusted baseline + CI90 / UNCBSL
 ============================================================
 
-Scopo
------
-Questo Step 05 non richiede più control_carbon_stock_change.csv/parquet.
+Purpose
+-------
+This Step 05 no longer requires control_carbon_stock_change.csv/parquet.
 
-Legge raster di stock di carbonio o di variazione del carbonio per:
-  1. i pixel donor/reference bloccati, selezionati da Step 03 / Step 04;
-  2. i pixel dell'area di progetto/attività prodotti da Step 01;
+It reads carbon stock or carbon change rasters for:
+  1. the locked donor/reference pixels, selected by Step 03 / Step 04;
+  2. the project/activity area pixels produced by Step 01;
 
-quindi estrae i valori raster a quelle coordinate di pixel e calcola:
+then it extracts the raster values at those pixel coordinates and computes:
 
-  - la distribuzione ΔC dei donor/reference;
-  - la ΔC media della baseline non aggiustata in tC/ha/anno;
-  - il totale della baseline non aggiustata per la PA in tC/anno e tC/periodo;
-  - la ΔC osservata di progetto dai valori raster della PA;
-  - l'intervallo di confidenza al 90% e UNCBSL sui pixel donor/reference bloccati.
+  - the ΔC distribution of the donor/reference;
+  - the mean unadjusted baseline ΔC in tC/ha/year;
+  - the total unadjusted baseline for the PA in tC/year and tC/period;
+  - the observed project ΔC from the PA raster values;
+  - the 90% confidence interval and UNCBSL on the locked donor/reference pixels.
 
-Regole metodologiche fondamentali
-----------------------------------
-1. UNCBSL è calcolato solo dai pixel donor/reference bloccati, matchati e sottoposti
-   al twin test. Il pool donor completo non viene mai usato.
+Fundamental methodological rules
+--------------------------------
+1. UNCBSL is computed only from the locked donor/reference pixels that were matched
+   and subjected to the twin test. The full donor pool is never used.
 
-2. N_control conta tutte le righe PA-control matchate/sottoposte al twin test.
-   I pixel di riferimento duplicati NON vengono rimossi, perché il riutilizzo dei
-   donor fa parte del design matched-pair accettato e deve restare rappresentato
-   nel campione della baseline.
+2. N_control counts all matched / twin-tested PA-control rows.
+   Duplicate reference pixels are NOT removed, because the reuse of the
+   donors is part of the accepted matched-pair design and must remain represented
+   in the baseline sample.
 
-3. I valori PA/progetto sono estratti dal raster della PA usando i pixel di progetto
-   di Step 01. Se project_df non è fornito, questo script ricarica:
+3. The PA/project values are extracted from the PA raster using the project pixels
+   of Step 01. If project_df is not provided, this script reloads:
       STARR_outputs/<RUN_ID>/01_extract/project_pixels_raw.parquet|csv
 
-4. Gli input raster possono essere:
-   A) raster ΔC annuale diretto in tC/ha/anno, oppure
-   B) raster di stock a T0 e all'anno di monitoraggio Y.
+4. The raster inputs can be:
+   A) a direct annual ΔC raster in tC/ha/year, or
+   B) stock rasters at T0 and at the monitoring year Y.
 
-5. I raster di stock possono essere in:
-   - tC/ha, nessuna conversione;
-   - Mg AGB/ha, convertiti in carbonio con BIOMASS_TO_CARBON_FRACTION
-     e l'opzionale ROOT_TO_SHOOT_RATIO.
+5. The stock rasters can be in:
+   - tC/ha, no conversion;
+   - Mg AGB/ha, converted to carbon with BIOMASS_TO_CARBON_FRACTION
+     and the optional ROOT_TO_SHOOT_RATIO.
 
 Output
 ------
@@ -54,7 +54,7 @@ Output
     deltaC_control_CI90.png
     deltaC_project_vs_control.png
 
-Chiamata da notebook
+Called from notebook
 --------------------
 control_pixels, project_pixels, summary, report, figs, out05 = (
     s05.run_baseline_ci_uncbsl_from_rasters(...)
@@ -101,62 +101,63 @@ if not _is_notebook():
 
 
 # ================================================================
-# PARAMETRI UTENTE
+# USER PARAMETERS
 # ================================================================
 
-RUN_ID = "Idiofa_Lobi_2018_buf50km_excl5km_WRB2_v09_raster_ext5km"
-PROJECT_NAME = "Idiofa_Lobi"
+# RUN_ID / PROJECT_NAME: these are ONLY fallback defaults. The notebook passes
+# the real values as parameters (project_name=..., run_id=...) to
+# run_baseline_ci_uncbsl_from_rasters(), or via the STARR_PROJECT_NAME /
+# STARR_RUN_ID environment variables. Nothing project-specific is hard-coded here.
+RUN_ID = os.environ.get("STARR_RUN_ID", "STARR_run")
+PROJECT_NAME = os.environ.get("STARR_PROJECT_NAME", "STARR_project")
 
-BASE_DIR_CANDIDATES = [
-    "/content/drive/MyDrive/STARR_Idiofa_New_V2",
-    "/content/content/MyDrive/STARR_Idiofa_New_V2",
-]
+BASE_DIR_CANDIDATES = [p for p in [os.environ.get("STARR_BASE_DIR", "")] if p]
 
 OUTPUT_FORMAT = "parquet"
 STRICT_LOCK_REQUIRED = True
 
-# Nome cartella output radice — CONFIGURABILE DAL NOTEBOOK.
-# Path radice del run: <base_dir> / OUTPUTS_DIRNAME / <RUN_ID>
-# Modo consigliato: os.environ["STARR_OUTPUTS_DIRNAME"] = "..." in cima al notebook.
+# Root output folder name — CONFIGURABLE FROM THE NOTEBOOK.
+# Run root path: <base_dir> / OUTPUTS_DIRNAME / <RUN_ID>
+# Recommended way: os.environ["STARR_OUTPUTS_DIRNAME"] = "..." at the top of the notebook.
 OUTPUTS_DIRNAME = os.environ.get("STARR_OUTPUTS_DIRNAME", "STARR_outputs")
 
-# Se i raster di stock sono C_t0 e C_y, ΔC = (C_y - C_t0) / MONITORING_PERIOD_YEARS.
-# Se si usano raster ΔC diretti, questo valore viene solo riportato.
+# If the stock rasters are C_t0 and C_y, ΔC = (C_y - C_t0) / MONITORING_PERIOD_YEARS.
+# If direct ΔC rasters are used, this value is only reported.
 MONITORING_PERIOD_YEARS = 6.0
 
-# Guardia metodologica sul monitoraggio.
-# La baseline non aggiustata cumulata a T0 è zero per definizione.
-# Il primo endpoint valido dopo T0 è T0 + MIN_MONITORING_PERIOD_YEARS.
+# Methodological guard on the monitoring.
+# The cumulative unadjusted baseline at T0 is zero by definition.
+# The first valid endpoint after T0 is T0 + MIN_MONITORING_PERIOD_YEARS.
 T0_YEAR = 2018
 MONITORING_YEAR = 2024
 MIN_MONITORING_PERIOD_YEARS = 4.0
 
-# Guardia conservativa sul CI contro l'autocorrelazione spaziale.
-# Il CI su base pixel è sempre riportato. Il CI su base blocco è calcolato anche
-# quando le coordinate spaziali sono risolvibili; il CI finale è max(CI pixel, CI blocco).
+# Conservative guard on the CI against spatial autocorrelation.
+# The pixel-based CI is always reported. The block-based CI is also computed
+# when the spatial coordinates are resolvable; the final CI is max(pixel CI, block CI).
 USE_CONSERVATIVE_BLOCK_CI = True
 SPATIAL_BLOCK_SIZE_M = 500.0
 
-# Area di progetto/attività in ettari.
-# Mantenere questo valore a 0.0 nello script; passare la vera area PA dal notebook.
-# Se lasciato a 0.0 e nessun argomento project_area_ha positivo è fornito, Step 05 si ferma.
+# Project/activity area in hectares.
+# Keep this value at 0.0 in the script; pass the true PA area from the notebook.
+# If left at 0.0 and no positive project_area_ha argument is provided, Step 05 stops.
 PROJECT_AREA_HA = 0.0
 
-# CI normale al 90%.
+# Normal 90% CI.
 CI90_Z_VALUE = 1.645
 
-# Conversione AGB -> C usata solo quando raster_spec["units"] == "AGB_Mg_ha".
+# AGB -> C conversion used only when raster_spec["units"] == "AGB_Mg_ha".
 # IPCC 2019 Refinement, Vol 4, Ch 4, Table 4.4.
-# R di default per foresta tropicale umida ≈ 0.24.  Impostare a 0.0 solo se i raster
-# includono già la biomassa ipogea o se la BGB è esclusa per disegno.
+# Default R for tropical moist forest ≈ 0.24.  Set to 0.0 only if the rasters
+# already include the belowground biomass or if the BGB is excluded by design.
 BIOMASS_TO_CARBON_FRACTION = 0.47
 ROOT_TO_SHOOT_RATIO = 0.4
 
-# PM REQUEST: calcolare l'unadjusted baseline ANCHE quando la ΔC media dei
-# controlli è <= 0 (baseline negativo), invece di azzerarlo con max(x,0).
-# La metodologia GS azzererebbe (nessun credito da baseline negativo), ma i PM
-# vogliono vedere il valore reale. Con True, mean_creditable = mean_raw.
-# NB: un baseline negativo NON e' creditabile in GS; resta una stima diagnostica.
+# PM REQUEST: compute the unadjusted baseline ALSO when the mean control ΔC
+# is <= 0 (negative baseline), instead of zeroing it with max(x,0).
+# The GS methodology would zero it (no credit from a negative baseline), but the PMs
+# want to see the real value. With True, mean_creditable = mean_raw.
+# NB: a negative baseline is NOT creditable in GS; it remains a diagnostic estimate.
 ALLOW_NEGATIVE_BASELINE = True
 
 COORD_ROUND_DECIMALS = 7
@@ -164,19 +165,19 @@ MIN_CONTROL_PIXELS = 2
 RASTER_SAMPLE_CHUNK_SIZE = 100_000
 
 # ----------------------------------------------------------------
-# Specifiche raster.
+# Raster specifications.
 #
-# Usare UNA delle seguenti modalità per ciascuna spec:
+# Use ONE of the following modes for each spec:
 #
-# MODALITÀ A — ΔC annuale diretta:
+# MODE A — direct annual ΔC:
 # {
 #   "delta_raster": "/path/to/deltaC.tif",
-#   "delta_band": 1,                    # opzionale; default 1
-#   "delta_band_name": None,             # alternativa opzionale all'indice di banda
+#   "delta_band": 1,                    # optional; default 1
+#   "delta_band_name": None,             # optional alternative to the band index
 #   "units": "tC_ha_yr"
 # }
 #
-# MODALITÀ B — stock a T0/Y in due raster:
+# MODE B — stock at T0/Y in two rasters:
 # {
 #   "stock_t0_raster": "/path/to/C_2018.tif",
 #   "stock_y_raster":  "/path/to/C_2024.tif",
@@ -184,10 +185,10 @@ RASTER_SAMPLE_CHUNK_SIZE = 100_000
 #   "stock_y_band": 1,
 #   "stock_t0_band_name": None,
 #   "stock_y_band_name": None,
-#   "units": "tC_ha"                    # oppure "AGB_Mg_ha"
+#   "units": "tC_ha"                    # or "AGB_Mg_ha"
 # }
 #
-# MODALITÀ C — stock a T0/Y in un singolo raster multibanda:
+# MODE C — stock at T0/Y in a single multiband raster:
 # {
 #   "stock_raster": "/path/to/C_stack.tif",
 #   "stock_t0_band_name": "C_2018",
@@ -222,7 +223,7 @@ PROJECT_RASTER_SPEC = {
 
 
 # ================================================================
-# FUNZIONI IO
+# IO FUNCTIONS
 # ================================================================
 
 def load_df(path):
@@ -280,9 +281,9 @@ def build_dirs(base_dirs=None):
 
     b0 = Path(base_dirs[0])
 
-    # Accetta una delle due:
-    # - directory radice del run: .../STARR_outputs/<RUN_ID>
-    # - directory di base globale: .../STARR_Idiofa_New_V2
+    # Accept either of the two:
+    # - run root directory: .../STARR_outputs/<RUN_ID>
+    # - global base directory: .../STARR_Idiofa_New_V2
     if (b0 / "01_extract").exists() or (b0 / "03_twin_test").exists():
         root = b0
     else:
@@ -316,7 +317,7 @@ def _as_path(v, key):
 
 
 # ================================================================
-# FUNZIONI COORDINATE
+# COORDINATE FUNCTIONS
 # ================================================================
 
 def standardize_ref_coords(df):
@@ -355,15 +356,15 @@ def standardize_project_coords(df):
 
 def prepare_control_rows(twin_df, use_all_matched_rows=True):
     """
-    Prepara le righe donor/reference per Step 05.
+    Prepare the donor/reference rows for Step 05.
 
-    Il comportamento di default è guidato dalla metodologia per il design matched-pair:
-    usare tutte le righe matchate bloccate/sottoposte al twin test esattamente come
-    selezionate da Step 03. I pixel di riferimento non vengono deduplicati, perché un
-    pixel donor riutilizzato rappresenta più di un match PA-control accettato e quindi
-    deve mantenere il suo peso di riga matchata nella distribuzione della baseline.
+    The default behavior is driven by the methodology for the matched-pair design:
+    use all the locked / twin-tested matched rows exactly as
+    selected by Step 03. The reference pixels are not deduplicated, because a
+    reused donor pixel represents more than one accepted PA-control match and therefore
+    must keep its matched-row weight in the baseline distribution.
 
-    Impostare use_all_matched_rows=False solo per controlli diagnostici di sensitività.
+    Set use_all_matched_rows=False only for diagnostic sensitivity checks.
     """
     out, lon_col, lat_col = standardize_ref_coords(twin_df)
     before = len(out)
@@ -377,7 +378,7 @@ def prepare_control_rows(twin_df, use_all_matched_rows=True):
 
 
 def prepare_project_rows(project_df, use_all_matched_rows=True):
-    """Prepara le righe PA/progetto. Di default mantiene tutte le righe PA matchate."""
+    """Prepare the PA/project rows. By default keeps all the matched PA rows."""
     out, lon_col, lat_col = standardize_project_coords(project_df)
     before = len(out)
     if not use_all_matched_rows:
@@ -389,7 +390,7 @@ def prepare_project_rows(project_df, use_all_matched_rows=True):
     return out, lon_col, lat_col, before, selection_mode
 
 
-# Alias retrocompatibili. Non deduplicano più per default.
+# Backward-compatible aliases. They no longer deduplicate by default.
 def deduplicate_controls(twin_df):
     out, lon_col, lat_col, before, _ = prepare_control_rows(twin_df, use_all_matched_rows=True)
     return out, lon_col, lat_col, before
@@ -401,7 +402,7 @@ def deduplicate_project_pixels(project_df):
 
 
 # ================================================================
-# CAMPIONAMENTO RASTER
+# RASTER SAMPLING
 # ================================================================
 
 def _band_descriptions(src):
@@ -437,7 +438,7 @@ def raster_pixel_area_ha(path):
     with rasterio.open(path) as src:
         if src.crs is None:
             return None
-        # Significativo solo per CRS proiettati. Per EPSG:4326 sarebbe in gradi².
+        # Meaningful only for projected CRS. For EPSG:4326 it would be in degrees².
         if src.crs.is_projected:
             return float(abs(src.transform.a * src.transform.e) / 10_000.0)
         return None
@@ -448,8 +449,8 @@ def sample_raster_values(points_df, lon_col, lat_col, raster_path,
                          out_col="value",
                          chunk_size=RASTER_SAMPLE_CHUNK_SIZE):
     """
-    Campiona una banda raster alle coordinate dei punti lon/lat in WGS84.
-    Restituisce (values, sample_metadata).
+    Sample a raster band at the lon/lat point coordinates in WGS84.
+    Returns (values, sample_metadata).
     """
     p = _as_path(raster_path, out_col)
 
@@ -509,11 +510,11 @@ def _conversion_factor(units):
     if units == "tC_ha":
         return 1.0, "stock already in tC/ha"
     if units == "AGB_Mg_ha":
-        # B6 fix: la conversione AGB→C include BGB via R (root:shoot).
-        # Questo è corretto SOLO se il raster è AGB aboveground-only.
-        # Se il raster include già le radici o è già C totale, R va messo a 0
-        # (altrimenti gonfia del fattore (1+R), ~24%). Il default non-zero NON
-        # deve passare inosservato: lo dichiariamo esplicitamente nel report.
+        # B6 fix: the AGB→C conversion includes BGB via R (root:shoot).
+        # This is correct ONLY if the raster is AGB aboveground-only.
+        # If the raster already includes the roots or is already total C, R must be set to 0
+        # (otherwise it inflates by the factor (1+R), ~24%). The non-zero default must NOT
+        # go unnoticed: we declare it explicitly in the report.
         r = float(ROOT_TO_SHOOT_RATIO)
         cf = float(BIOMASS_TO_CARBON_FRACTION)
         conv = cf * (1.0 + r)
@@ -541,9 +542,9 @@ def _conversion_factor(units):
 def sample_delta_from_raster_spec(points_df, lon_col, lat_col, raster_spec,
                                   prefix, monitoring_period_years=MONITORING_PERIOD_YEARS):
     """
-    Aggiunge:
+    Adds:
       <prefix>_deltaC_tC_ha_yr
-      colonne di stock campionate opzionali
+      optional sampled stock columns
     """
     spec = dict(raster_spec or {})
     out = points_df.copy()
@@ -558,7 +559,7 @@ def sample_delta_from_raster_spec(points_df, lon_col, lat_col, raster_spec,
         "rasters": {},
     }
 
-    # MODALITÀ A — raster delta annuale diretto
+    # MODE A — direct annual delta raster
     delta_path = spec.get("delta_raster")
     if delta_path is not None and str(delta_path).strip() != "":
         vals, meta_delta = sample_raster_values(
@@ -574,7 +575,7 @@ def sample_delta_from_raster_spec(points_df, lon_col, lat_col, raster_spec,
         sample_meta["rasters"]["delta"] = meta_delta
         return out, sample_meta
 
-    # MODALITÀ B/C — raster di stock
+    # MODE B/C — stock raster
     stock_stack = spec.get("stock_raster")
     if stock_stack is not None and str(stock_stack).strip() != "":
         t0_path = stock_stack
@@ -632,10 +633,10 @@ def validate_monitoring_period(t0_year=None, monitoring_year=None,
                                monitoring_period_years=None,
                                min_monitoring_period_years=MIN_MONITORING_PERIOD_YEARS):
     """
-    Applica la regola di monitoraggio post-T0.
+    Apply the post-T0 monitoring rule.
 
-    A T0 la baseline cumulata è zero. Un endpoint di differenza di stock è valido
-    solo se il periodo di monitoraggio è >= al numero minimo di anni richiesto.
+    At T0 the cumulative baseline is zero. A stock-difference endpoint is valid
+    only if the monitoring period is >= the minimum number of years required.
     """
     t0 = T0_YEAR if t0_year is None else int(t0_year)
 
@@ -688,12 +689,12 @@ def add_spatial_blocks(df, lon_col, lat_col, sample_meta,
                        block_size_m=SPATIAL_BLOCK_SIZE_M,
                        block_col="_ci_block_id"):
     """
-    Aggiunge un id di blocco spaziale usato per il CI conservativo su base blocco.
+    Add a spatial block id used for the conservative block-based CI.
 
-    Priorità:
-      1. coordinate proiettate già presenti nella tabella dei pixel;
-      2. trasformazione lon/lat nel CRS del raster campionato se proiettato;
-      3. fallback a EPSG:3857 se il CRS del raster è geografico o non disponibile.
+    Priority:
+      1. projected coordinates already present in the pixel table;
+      2. lon/lat transformation into the CRS of the sampled raster if projected;
+      3. fallback to EPSG:3857 if the raster CRS is geographic or not available.
     """
     out = df.copy()
     if len(out) == 0:
@@ -806,10 +807,10 @@ def calculate_block_ci(df, delta_col="ref_deltaC_tC_ha_yr", block_col="_ci_block
 
 def infer_project_pixel_area_ha(project_pixels, project_sample_meta):
     """
-    Solo fallback diagnostico: inferisce l'area del pixel di riga dai metadati di Step 01/raster.
+    Diagnostic fallback only: infers the row pixel area from the Step 01/raster metadata.
 
-    Questo NON rappresenta necessariamente la PA completa se Step 01 ha usato il campionamento
-    della PA o se Step 05 usa righe matchate. Per i totali finali, usare resolve_project_area_ha().
+    This does NOT necessarily represent the full PA if Step 01 used the sampling
+    of the PA or if Step 05 uses matched rows. For the final totals, use resolve_project_area_ha().
     """
     if "pixel_area_ha" in project_pixels.columns:
         area_vals = pd.to_numeric(project_pixels["pixel_area_ha"], errors="coerce")
@@ -841,11 +842,11 @@ def infer_project_pixel_area_ha(project_pixels, project_sample_meta):
 def resolve_project_area_ha(project_area_ha=None, project_pixels=None, project_sample_meta=None,
                             allow_pixel_area_fallback=False):
     """
-    Risolve l'area di progetto/attività COMPLETA usata per scalare la ΔC media a tC totali.
+    Resolve the FULL project/activity area used to scale the mean ΔC to total tC.
 
-    Il PROJECT_AREA_HA a livello di script è intenzionalmente 0.0. L'area reale deve
-    essere passata dal notebook o da un'altra sorgente a monte. Questo impedisce di
-    usare silenziosamente solo l'area delle righe campionate/matchate.
+    The script-level PROJECT_AREA_HA is intentionally 0.0. The real area must
+    be passed from the notebook or from another upstream source. This prevents
+    silently using only the area of the sampled/matched rows.
     """
     candidates = []
     if project_area_ha is not None:
@@ -905,22 +906,22 @@ def calculate_control_ci(control_pixels, lon_col=None, lat_col=None, donor_sampl
     n_unique_ref = int(df[["_ref_lon_key", "_ref_lat_key"]].drop_duplicates().shape[0]) \
         if {"_ref_lon_key", "_ref_lat_key"}.issubset(df.columns) else None
 
-    # MEAN: su tutte le righe matchate (donor riusati inclusi) — coerente col design
-    # matched-pair: ogni match rappresenta un pixel PA. Questo è corretto e voluto.
+    # MEAN: over all matched rows (reused donors included) — consistent with the
+    # matched-pair design: each match represents one PA pixel. This is correct and intended.
     mean_delta = float(np.mean(delta))
     median_delta = float(np.median(delta))
     sigma_control = float(np.std(delta, ddof=1))
 
-    # A1 fix — PSEUDO-REPLICAZIONE NELLO STIMATORE DI VARIANZA:
-    # SE = σ/√N usa N = numero di OSSERVAZIONI INDIPENDENTI, non il numero di
-    # righe matchate. I donor riusati e i pixel a 30 m spazialmente adiacenti NON
-    # sono indipendenti. Usare N=n_control (righe) gonfia N → SE sottostimato →
-    # CI troppo stretto → baseline meno conservativo (opposto di quanto GS richiede).
-    # Conteggio conservativo: N_effettivo = pixel di riferimento UNICI.
+    # A1 fix — PSEUDO-REPLICATION IN THE VARIANCE ESTIMATOR:
+    # SE = σ/√N uses N = number of INDEPENDENT OBSERVATIONS, not the number of
+    # matched rows. The reused donors and the spatially adjacent 30 m pixels are NOT
+    # independent. Using N=n_control (rows) inflates N → underestimated SE →
+    # CI too narrow → less conservative baseline (the opposite of what GS requires).
+    # Conservative count: N_effective = UNIQUE reference pixels.
     n_eff = int(n_unique_ref) if (n_unique_ref and n_unique_ref >= MIN_CONTROL_PIXELS) else n_control
     se_control = float(sigma_control / math.sqrt(n_eff))
     ci90_abs_pixel = float(CI90_Z_VALUE * se_control)
-    # SE/CI ingenuo (N=tutte le righe) tenuto solo come diagnostico.
+    # Naive SE/CI (N=all rows) kept only as a diagnostic.
     se_control_naive = float(sigma_control / math.sqrt(n_control))
     ci90_abs_pixel_naive = float(CI90_Z_VALUE * se_control_naive)
 
@@ -1017,8 +1018,8 @@ def calculate_control_ci(control_pixels, lon_col=None, lat_col=None, donor_sampl
 
 def calculate_project_summary(project_pixels, full_project_area_ha):
     """
-    Calcola la ΔC osservata della PA dalle righe PA matchate e scala la media delle
-    righe matchate all'area PA completa fornita esternamente.
+    Compute the observed PA ΔC from the matched PA rows and scale the mean of the
+    matched rows to the full PA area provided externally.
     """
     df = project_pixels.copy()
     df["proj_deltaC_tC_ha_yr"] = pd.to_numeric(df["proj_deltaC_tC_ha_yr"], errors="coerce")
@@ -1036,8 +1037,8 @@ def calculate_project_summary(project_pixels, full_project_area_ha):
     n_unique_proj = int(df[["_proj_lon_key", "_proj_lat_key"]].drop_duplicates().shape[0]) \
         if {"_proj_lon_key", "_proj_lat_key"}.issubset(df.columns) else None
 
-    # Pesatura uguale delle righe matchate. L'area di riga è solo un peso di scala in modo
-    # che le somme siano riportate sull'area PA completa, non sull'area del sottoinsieme/campione.
+    # Equal weighting of the matched rows. The row area is only a scaling weight so
+    # that the sums are reported on the full PA area, not on the subset/sample area.
     scaled_row_area = pa_ha / n_rows
     df["project_pixel_area_ha"] = scaled_row_area
 
@@ -1062,18 +1063,18 @@ def build_unadjusted_baseline_summary(control_summary, project_summary,
                                       temporal_meta=None,
                                       allow_negative_baseline=ALLOW_NEGATIVE_BASELINE):
     """
-    Costruisce le quantità della baseline non aggiustata grezze e creditabili.
+    Build the raw and creditable unadjusted baseline quantities.
 
-    Baseline grezza = ΔC media dei controlli × area PA.
-    Tasso di rimozione di baseline creditabile = max(ΔC media dei controlli, 0) × area PA,
-    A MENO CHE allow_negative_baseline=True (richiesta PM), nel qual caso il
-    valore creditabile è uguale al valore grezzo anche quando negativo.
+    Raw baseline = mean control ΔC × PA area.
+    Creditable baseline removal rate = max(mean control ΔC, 0) × PA area,
+    UNLESS allow_negative_baseline=True (PM request), in which case the
+    creditable value equals the raw value even when negative.
 
-    Una ΔC dei controlli negativa normalmente non può generare rimozioni di baseline per il crediting.
-    A T0 la baseline non aggiustata cumulata è zero.
+    A negative control ΔC normally cannot generate baseline removals for crediting.
+    At T0 the cumulative unadjusted baseline is zero.
     """
     mean_raw = float(control_summary["mean_deltaC_control_tC_ha_yr"])
-    # PM REQUEST: niente clamp a zero se allow_negative_baseline=True.
+    # PM REQUEST: no clamp to zero if allow_negative_baseline=True.
     mean_creditable = float(mean_raw) if allow_negative_baseline else float(max(mean_raw, 0.0))
     pa_ha = float(project_summary["project_area_ha"])
     period = float(monitoring_period_years)
@@ -1094,7 +1095,7 @@ def build_unadjusted_baseline_summary(control_summary, project_summary,
         baseline_unc_total_period = float(baseline_creditable_total_period + ci_total_period)
         uncertainty_status = "computed_positive_baseline"
     elif allow_negative_baseline and mean_creditable != 0:
-        # Baseline negativo mantenuto (PM): CI applicato simmetricamente.
+        # Negative baseline kept (PM): CI applied symmetrically.
         baseline_unc_mean = float(mean_creditable + ci_final)
         baseline_unc_total_yr = float(baseline_creditable_total_yr + ci_total_yr)
         baseline_unc_total_period = float(baseline_creditable_total_period + ci_total_period)
@@ -1115,20 +1116,20 @@ def build_unadjusted_baseline_summary(control_summary, project_summary,
 
     temporal_meta = temporal_meta or {}
 
-    # ── Quantità numeriche BL_unadj,y destinate ai PM ─────────────────
+    # ── BL_unadj,y numeric quantities intended for the PMs ─────────────────
     # Formula (GS STARR Eq 31a): BL_unadj,y = ΔC_ref,y × A_project
     #   ΔC_ref,y  = mean_creditable  [tC/ha/yr, max(mean_control_deltaC, 0)]
     #   A_project = pa_ha            [ha]
-    # Questi sono numeri assoluti, NON frazioni o percentuali.
+    # These are absolute numbers, NOT fractions or percentages.
     _co2e = 44.0 / 12.0
-    bl_unadj_y_tC          = baseline_creditable_total_yr          # tC/anno
-    bl_unadj_y_tCO2e       = baseline_creditable_total_yr * _co2e  # tCO2e/anno
-    bl_unadj_period_tC     = baseline_creditable_total_period       # tC/periodo
-    bl_unadj_period_tCO2e  = baseline_creditable_total_period * _co2e  # tCO2e/periodo
-    bl_unadj_raw_y_tCO2e   = baseline_raw_total_yr * _co2e         # tCO2e/anno (incl. negativi)
+    bl_unadj_y_tC          = baseline_creditable_total_yr          # tC/year
+    bl_unadj_y_tCO2e       = baseline_creditable_total_yr * _co2e  # tCO2e/year
+    bl_unadj_period_tC     = baseline_creditable_total_period       # tC/period
+    bl_unadj_period_tCO2e  = baseline_creditable_total_period * _co2e  # tCO2e/period
+    bl_unadj_raw_y_tCO2e   = baseline_raw_total_yr * _co2e         # tCO2e/year (incl. negatives)
 
     return {
-        # ── Output primari etichettati per metodologia (BL_unadj,y = ΔC_ref,y × A_project) ──
+        # ── Primary outputs labeled by methodology (BL_unadj,y = ΔC_ref,y × A_project) ──
         "BL_unadj_y_tC":              bl_unadj_y_tC,
         "BL_unadj_y_tCO2e":           bl_unadj_y_tCO2e,
         "BL_unadj_period_tC":         bl_unadj_period_tC,
@@ -1137,7 +1138,7 @@ def build_unadjusted_baseline_summary(control_summary, project_summary,
         "BL_unadj_formula":           "BL_unadj_y = delta_C_ref_y_tC_ha_yr * project_area_ha",
         "delta_C_ref_y_tC_ha_yr":     mean_creditable,
         "project_area_ha_used":       pa_ha,
-        # ── Campi interni / diagnostici ───────────────────────────────
+        # ── Internal / diagnostic fields ───────────────────────────────
         "unadjusted_baseline_mean_raw_tC_ha_yr": mean_raw,
         "unadjusted_baseline_total_raw_tC_yr": baseline_raw_total_yr,
         "unadjusted_baseline_total_raw_tC_period": baseline_raw_total_period,
@@ -1194,31 +1195,31 @@ _DAF_LUF_DEFAULT = 0.0125
 
 def _build_pm_handoff(summary, monitoring_period_years):
     """
-    Costruisce un blocco di handoff pronto per i PM con tutti i valori necessari per completare
-    Eq-6 (BR_crediting) ed Eq-22 (nAR) della metodologia GS STARR.
+    Build a PM-ready handoff block with all the values needed to complete
+    Eq-6 (BR_crediting) and Eq-22 (nAR) of the GS STARR methodology.
 
-    Questa funzione NON applica DAF o BR_gov — quelle sono responsabilità dei PM.
-    Fornisce conversioni in tCO2e pre-calcolate e formule esplicite.
+    This function does NOT apply DAF or BR_gov — those are PM responsibilities.
+    It provides pre-computed tCO2e conversions and explicit formulas.
     """
     period = float(monitoring_period_years)
     pa_ha = float(summary.get("project_area_ha", 0.0))
 
-    # BL_unadj,y = ΔC_ref,y × A_project  (GS STARR Eq 31a) — numero assoluto, non una frazione.
-    # Preferire le nuove chiavi BL_unadj_* esposte in build_unadjusted_baseline_summary; fallback alle legacy.
+    # BL_unadj,y = ΔC_ref,y × A_project  (GS STARR Eq 31a) — absolute number, not a fraction.
+    # Prefer the new BL_unadj_* keys exposed in build_unadjusted_baseline_summary; fallback to the legacy ones.
     bl_mean_tC_ha_yr = float(summary.get("delta_C_ref_y_tC_ha_yr",
                               summary.get("unadjusted_baseline_mean_tC_ha_yr", 0.0)))
     bl_total_tC_period = float(summary.get("BL_unadj_period_tC",
                                 summary.get("unadjusted_baseline_total_tC_period", 0.0)))
 
-    # Conversioni tCO2e — lette dal summary se già calcolate, altrimenti convertite localmente
+    # tCO2e conversions — read from the summary if already computed, otherwise converted locally
     bl_mean_tCO2e_ha_yr   = bl_mean_tC_ha_yr * _TC_TO_TCO2E
     bl_total_tCO2e_period = float(summary.get("BL_unadj_period_tCO2e",
                                                bl_total_tC_period * _TC_TO_TCO2E))
 
     # --- UNCBSL ---
-    # B5: Eq-6 usa BL_unadj GREZZO (BL_unadj_period_tC sopra) × (1+UNCBSL).
-    # NON usare summary['baseline_uncertainty_adjusted_*'] qui: quello è già
-    # BL × (1+UNCBSL) e moltiplicarlo ancora per (1+UNCBSL) sarebbe doppio conteggio.
+    # B5: Eq-6 uses the RAW BL_unadj (BL_unadj_period_tC above) × (1+UNCBSL).
+    # Do NOT use summary['baseline_uncertainty_adjusted_*'] here: that is already
+    # BL × (1+UNCBSL) and multiplying it again by (1+UNCBSL) would be double counting.
     uncbsl_frac = summary.get("uncbsl_fraction")
     uncbsl_pct = summary.get("uncbsl_percent")
 
@@ -1226,13 +1227,13 @@ def _build_pm_handoff(summary, monitoring_period_years):
     ci90_final_tC_ha_yr = float(summary.get("ci90_abs_final_tC_ha_yr", 0.0))
     ci90_final_tCO2e_ha_yr = ci90_final_tC_ha_yr * _TC_TO_TCO2E
 
-    # --- Progetto osservato in tCO2e ---
+    # --- Observed project in tCO2e ---
     proj_total_tC_period = float(summary.get("project_observed_total_tC_period", 0.0))
     proj_total_tCO2e_period = proj_total_tC_period * _TC_TO_TCO2E
 
-    # --- BR_crediting illustrativo (riferimento per i PM, usando il floor DAF) ---
+    # --- Illustrative BR_crediting (reference for the PMs, using the DAF floor) ---
     # Eq-6: BR_crediting = MAX[ BR_unadj × (1 + DAF) × (1 + UNCBSL), BR_gov ]
-    # BR_gov è specifico del progetto e deve essere impostato dai PM.
+    # BR_gov is project-specific and must be set by the PMs.
     daf_floor = _DAF_LUF_DEFAULT
     uncbsl_for_calc = float(uncbsl_frac) if uncbsl_frac is not None else 0.0
     br_crediting_illustrative_tCO2e = (
@@ -1248,7 +1249,7 @@ def _build_pm_handoff(summary, monitoring_period_years):
         "project_area_ha": pa_ha,
         "monitoring_period_years": period,
 
-        # Baseline non aggiustata (BL_unadj) — Eq-1
+        # Unadjusted baseline (BL_unadj) — Eq-1
         "BL_unadj_mean_tC_ha_yr": bl_mean_tC_ha_yr,
         "BL_unadj_mean_tCO2e_ha_yr": bl_mean_tCO2e_ha_yr,
         "BL_unadj_total_tC_period": bl_total_tC_period,
@@ -1264,11 +1265,11 @@ def _build_pm_handoff(summary, monitoring_period_years):
         "CI90_abs_final_tCO2e_ha_yr": ci90_final_tCO2e_ha_yr,
         "CI90_source": summary.get("ci90_final_source"),
 
-        # Progetto osservato
+        # Observed project
         "project_observed_total_tC_period": proj_total_tC_period,
         "project_observed_total_tCO2e_period": proj_total_tCO2e_period,
 
-        # Eq-6 illustrativa (i PM devono verificare DAF e impostare BR_gov)
+        # Illustrative Eq-6 (the PMs must verify DAF and set BR_gov)
         "illustrative_DAF_used": daf_floor,
         "illustrative_BR_crediting_tCO2e_period": br_crediting_illustrative_tCO2e,
         "illustrative_note": (
@@ -1277,7 +1278,7 @@ def _build_pm_handoff(summary, monitoring_period_years):
             "The PMs must compare with BR_gov and take the MAX per Eq-6."
         ),
 
-        # Prossimi passi per i PM
+        # Next steps for the PMs
         "pm_actions_required": [
             "1. Verify or update DAF (LUF floor = 1.25%; check the host-country sectoral override)",
             "2. Determine BR_gov (unconditional reforestation NDC target, if applicable)",
@@ -1365,36 +1366,38 @@ def run_baseline_ci_uncbsl_from_rasters(
     use_conservative_block_ci=USE_CONSERVATIVE_BLOCK_CI,
     spatial_block_size_m=SPATIAL_BLOCK_SIZE_M,
     allow_negative_baseline=ALLOW_NEGATIVE_BASELINE,
+    project_name=None,
+    run_id=None,
     verbose=True,
 ):
     """
-    Step 05 su base raster.
+    Raster-based Step 05.
 
-    Parametri
-    ---------
+    Parameters
+    ----------
     base_dirs : list[path]
-        Di solito [OUTPUT_ROOT]. Usato per ricaricare i file di Step 01/03/04 se i dataframe non sono forniti.
+        Usually [OUTPUT_ROOT]. Used to reload the Step 01/03/04 files if the dataframes are not provided.
     output_dir : path
-        Cartella di output.
+        Output folder.
     donor_raster_spec : dict
-        Spec raster per i pixel donor/reference bloccati.
+        Raster spec for the locked donor/reference pixels.
     project_raster_spec : dict
-        Spec raster per i pixel PA/progetto.
+        Raster spec for the PA/project pixels.
     twin_df : DataFrame | None
-        twin_tested_pixels di Step 03. Se None, ricarica da 03_twin_test.
+        twin_tested_pixels from Step 03. If None, reloads from 03_twin_test.
     project_df : DataFrame | None
-        Dataframe PA/progetto opzionale. Se None e use_matched_project_rows=True, Step 05 usa twin_df
-        in modo che PA e controllo siano valutati sulle stesse righe matchate.
+        Optional PA/project dataframe. If None and use_matched_project_rows=True, Step 05 uses twin_df
+        so that PA and control are evaluated on the same matched rows.
     project_area_ha : float | None
-        Area di progetto/attività completa in ettari. Richiesta per i calcoli finali del totale della baseline.
+        Full project/activity area in hectares. Required for the final baseline total computations.
     use_all_matched_rows : bool
-        Se True, nessuna deduplicazione delle coordinate viene applicata alle righe matchate PA/controllo.
+        If True, no coordinate deduplication is applied to the matched PA/control rows.
     use_matched_project_rows : bool
-        Se True e project_df è None, i valori PA sono estratti da proj_lon/proj_lat di twin_df.
+        If True and project_df is None, the PA values are extracted from proj_lon/proj_lat of twin_df.
     manifest : dict | None
-        Manifest di Step 04. Se None, ricarica da 04_reference_area.
+        Step 04 manifest. If None, reloads from 04_reference_area.
     monitoring_period_years : float | None
-        Sovrascrive MONITORING_PERIOD_YEARS.
+        Overrides MONITORING_PERIOD_YEARS.
     """
     if monitoring_period_years is None:
         monitoring_period_years = MONITORING_PERIOD_YEARS
@@ -1417,8 +1420,8 @@ def run_baseline_ci_uncbsl_from_rasters(
     if manifest is None:
         manifest = load_json_if_exists(dirs["04"] / "reference_area_FINAL_manifest.json")
 
-    # P3 FIX: messaggio chiaro se il manifest non è risolvibile (Step 04 non eseguito
-    # o output mancante) invece di un NameError opaco a valle.
+    # P3 FIX: clear message if the manifest is not resolvable (Step 04 not run
+    # or output missing) instead of an opaque NameError downstream.
     if manifest is None:
         raise RuntimeError(
             "STEP 05 blocked: Step 04 manifest not available.\n"
@@ -1459,7 +1462,7 @@ def run_baseline_ci_uncbsl_from_rasters(
         print(f"Output                     : {out_dir}")
         print(f"{'=' * 72}")
 
-    # 1. Controlli matchati bloccati — nessuna deduplicazione di default.
+    # 1. Locked matched controls — no deduplication by default.
     control_pixels, ref_lon_col, ref_lat_col, n_control_before, control_selection_mode = prepare_control_rows(
         twin_df, use_all_matched_rows=use_all_matched_rows
     )
@@ -1475,7 +1478,7 @@ def run_baseline_ci_uncbsl_from_rasters(
         monitoring_period_years=monitoring_period_years,
     )
 
-    # 2. Righe matchate progetto/PA — nessuna deduplicazione di default.
+    # 2. Matched project/PA rows — no deduplication by default.
     project_pixels, proj_lon_col, proj_lat_col, n_project_before, project_selection_mode = prepare_project_rows(
         project_df, use_all_matched_rows=use_all_matched_rows
     )
@@ -1491,7 +1494,7 @@ def run_baseline_ci_uncbsl_from_rasters(
         monitoring_period_years=monitoring_period_years,
     )
 
-    # 3. CI / UNCBSL dei controlli.
+    # 3. Control CI / UNCBSL.
     control_valid, control_summary = calculate_control_ci(
         control_pixels,
         lon_col=ref_lon_col,
@@ -1501,7 +1504,7 @@ def run_baseline_ci_uncbsl_from_rasters(
         spatial_block_size_m=spatial_block_size_m,
     )
 
-    # 4. Area PA completa + delta osservato di progetto.
+    # 4. Full PA area + observed project delta.
     full_project_area_ha, area_meta = resolve_project_area_ha(
         project_area_ha=project_area_ha,
         project_pixels=project_pixels,
@@ -1510,7 +1513,7 @@ def run_baseline_ci_uncbsl_from_rasters(
     )
     project_valid, project_summary = calculate_project_summary(project_pixels, full_project_area_ha)
 
-    # 5. Totale della baseline non aggiustata.
+    # 5. Unadjusted baseline total.
     baseline_summary = build_unadjusted_baseline_summary(
         control_summary,
         project_summary,
@@ -1519,10 +1522,16 @@ def run_baseline_ci_uncbsl_from_rasters(
         allow_negative_baseline=allow_negative_baseline,
     )
 
-    # 6. Summary combinato.
+    # Project name / run id: use the values passed from the notebook config
+    # (first cell). Fall back to the module constants only if not provided,
+    # so nothing is hard-coded in the printed/JSON output.
+    _project_name = project_name if project_name is not None else PROJECT_NAME
+    _run_id       = run_id if run_id is not None else RUN_ID
+
+    # 6. Combined summary.
     summary = {
-        "run_id": RUN_ID,
-        "project_name": PROJECT_NAME,
+        "run_id": _run_id,
+        "project_name": _project_name,
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "methodology": "GS STARR Track 1 SEMDB",
         "step": "05_raster_based_unadjusted_baseline_CI90_UNCBSL",
@@ -1538,7 +1547,7 @@ def run_baseline_ci_uncbsl_from_rasters(
         "area_metadata": area_meta,
     }
 
-    # 7. Salvataggio degli output.
+    # 7. Save the outputs.
     control_out = save_df(control_valid, out_dir / "baseline_control_deltaC_distribution", OUTPUT_FORMAT)
     project_out = save_df(project_valid, out_dir / "project_deltaC_distribution", OUTPUT_FORMAT)
 
@@ -1552,8 +1561,8 @@ def run_baseline_ci_uncbsl_from_rasters(
     figs["project_vs_control"] = fig2
 
     report = {
-        "run_id": RUN_ID,
-        "project_name": PROJECT_NAME,
+        "run_id": _run_id,
+        "project_name": _project_name,
         "timestamp_utc": summary["timestamp_utc"],
         "methodology": "GS STARR Track 1 SEMDB",
         "step": "05_raster_based_unadjusted_baseline_CI90_UNCBSL",
@@ -1623,8 +1632,8 @@ def run_baseline_ci_uncbsl_from_rasters(
         print(f"Unique PA px represented       : {summary['n_project_unique_pixels_represented']:,}")
         print(f"Project area used              : {summary['project_area_ha']:,.4f} ha")
         print(f"{'─' * 72}")
-        # ── Output primario: BL_unadj,y = ΔC_ref,y × A_project (GS STARR Eq 31a) ──
-        # Questi sono i numeri che servono a un PM — tC e tCO2e assoluti, NON frazioni.
+        # ── Primary output: BL_unadj,y = ΔC_ref,y × A_project (GS STARR Eq 31a) ──
+        # These are the numbers a PM needs — absolute tC and tCO2e, NOT fractions.
         print(f"  ΔC_ref,y (creditable)        : {summary['delta_C_ref_y_tC_ha_yr']:+.6f} tC/ha/year")
         print(f"  A_project                    : {summary['project_area_ha_used']:,.4f} ha")
         print(f"  BL_unadj,y  [tC/year]        : {summary['BL_unadj_y_tC']:+,.4f} tC/year")
@@ -1648,7 +1657,7 @@ def run_baseline_ci_uncbsl_from_rasters(
         print(f"  Output                       : {out_dir}")
         print(f"{'=' * 72}")
 
-        # Riepilogo handoff crediting per i PM.
+        # Crediting handoff summary for the PMs.
         ho = report.get("pm_handoff_crediting", {})
         if ho:
             print(f"\n{'─' * 72}")
@@ -1667,7 +1676,7 @@ def run_baseline_ci_uncbsl_from_rasters(
     return control_valid, project_valid, summary, report, figs, out_dir
 
 
-# Nomi retrocompatibili.
+# Backward-compatible names.
 def run_baseline_ci_uncbsl(*args, **kwargs):
     return run_baseline_ci_uncbsl_from_rasters(*args, **kwargs)
 

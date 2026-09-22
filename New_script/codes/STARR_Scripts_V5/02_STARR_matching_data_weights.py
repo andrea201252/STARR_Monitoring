@@ -5,36 +5,37 @@ GS STARR – Track 1 SEMDB  |  02_STARR_matching_data_weights.py
 STEP 02 — Hard-Caliper + Weighted Mahalanobis KNN Matching
 ============================================================
 
-PARAMETRI MANUALI:
-  K_NEIGHBOURS          numero vicini KNN finali selezionati
-  KNN_QUERY_CANDIDATES  candidati cercati prima dei calipers (≥ K_NEIGHBOURS)
-  N_DONOR_SAMPLE        campionamento donor se None=tutti
+MANUAL PARAMETERS:
+  K_NEIGHBOURS          number of final selected KNN neighbours
+  KNN_QUERY_CANDIDATES  candidates searched before the calipers (≥ K_NEIGHBOURS)
+  N_DONOR_SAMPLE        donor sampling; if None=all
   ALLOW_TEXTURE_FALLBACK
   MAX_DONOR_REUSE
 
-NOVITÀ v04 rispetto alla versione precedente:
-  - HARD CALIPER VETTORIZZATI: il check dei calipers non usa più un loop
-    Python per pixel per candidato, ma pre-estrae array numpy dal donor_df
-    e fa le comparazioni in numpy → 10-50x più veloce.
-  - Eliminato l'uso di pandas iloc per ogni candidato (era il collo di bottiglia).
-  - Logica KNN adattata dal QGIS PlotMatcherAlgorithm: usa la stessa metrica
-    Mahalanobis (VI = inv(Σ_LedoitWolf)) ma con whitening Cholesky + ball_tree
-    invece di cdist brute-force, che non scala oltre 50k pixel donor.
+WHAT'S NEW in v04 compared to the previous version:
+  - VECTORIZED HARD CALIPERS: the caliper check no longer uses a Python loop
+    per pixel per candidate, but pre-extracts numpy arrays from donor_df
+    and performs the comparisons in numpy → 10-50x faster.
+  - Removed the use of pandas iloc for each candidate (it was the bottleneck).
+  - KNN logic adapted from the QGIS PlotMatcherAlgorithm: uses the same
+    Mahalanobis metric (VI = inv(Σ_LedoitWolf)) but with Cholesky whitening + ball_tree
+    instead of brute-force cdist, which does not scale beyond 50k donor pixels.
 
 Hard calipers (GS STARR Annex 1 Table A.3):
-  SOC_g_kg       ±10% della media di progetto
-  NDVI_t0        ±10% della media di progetto
+  SOC_g_kg       ±10% of the project mean
+  NDVI_t0        ±10% of the project mean
   elevation      ±200 m
   slope_deg      ±10°
   dist_roads_km  ±1 km
-  texture_class  match esatto (WRB2 → classe di texture del suolo)
-  tenure_col     match esatto se presente
+  texture_class  exact match (WRB2 → soil texture class)
+  tenure_col     exact match if present
 """
 
 import warnings
 warnings.filterwarnings("ignore")
 
 import gc
+import os
 import json
 import time
 from pathlib import Path
@@ -64,43 +65,68 @@ if not _is_notebook():
     matplotlib.use("Agg")
 
 
-# ── PARAMETRI MANUALI ────────────────────────────────────────────────
-
-K_NEIGHBOURS          = 1
-KNN_QUERY_CANDIDATES  = 150   # candidati per pixel; adattativi al pool size
-N_DONOR_SAMPLE        = 300_000
-ALLOW_TEXTURE_FALLBACK = False
-MAX_DONOR_REUSE       = 1
-
-# Covariate da ESCLUDERE dal matching a VALORI (prefiltro + Mahalanobis + SMD).
+# ── MANUAL PARAMETERS ────────────────────────────────────────────────
 #
-# precip_mm_yr: in GS Annex 1 Table A.3 la Precipitation (MAP) è obbligatoria ma
-# la sua tolleranza è "Same Isohyet / Ecoregion" — cioè un vincolo CATEGORIALE
-# di zona, NON un caliper sui valori (±mm). Va quindi soddisfatta a monte, non
-# come covariata continua: il donor pool è già ritagliato sull'ECOREGIONE del
-# progetto nel GEE (rawDonorSearchGeom = buffer ∩ ecoregione), quindi il
-# requisito "same ecoregion" è rispettato per costruzione.
-# Usarla come valore continuo era errato (e decimava il pool: es. Muraca_Caia
-# 938k → 79k, -92%). Se serve la stringenza "same isohyet", si aggiunge un
-# match categoriale su bande di pioggia (isoiete), non un caliper stretto.
-# Mettere [] per (ri)usare tutte le covariate a valori.
+# ALL editable from the notebook §1. They are read from environment variables
+# so the value SURVIVES the internal module reloads done by 00b/00 (setting
+# s02.K_NEIGHBOURS = ... as a module attribute does NOT reach the fresh copy
+# that 00b re-imports; an env var does). The notebook sets:
+#   os.environ["STARR_K_NEIGHBOURS"], ["STARR_KNN_QUERY_CANDIDATES"],
+#   ["STARR_N_DONOR_SAMPLE"], ["STARR_KNN_N_JOBS"].
+def _env_int(name, default):
+    v = os.environ.get(name)
+    try:
+        return int(float(v)) if v not in (None, "") else int(default)
+    except Exception:
+        return int(default)
+
+def _env_int_or_none(name, default):
+    """Returns None when the env var is 'none'/'all'/'0'/'' (→ use all donors)."""
+    v = os.environ.get(name)
+    if v is None or v == "":
+        return default
+    if str(v).strip().lower() in ("none", "all", "0"):
+        return None
+    try:
+        return int(float(v))
+    except Exception:
+        return default
+
+K_NEIGHBOURS          = _env_int("STARR_K_NEIGHBOURS", 1)
+KNN_QUERY_CANDIDATES  = _env_int("STARR_KNN_QUERY_CANDIDATES", 150)   # candidates per pixel; adaptive to the pool size
+N_DONOR_SAMPLE        = _env_int_or_none("STARR_N_DONOR_SAMPLE", 300_000)
+ALLOW_TEXTURE_FALLBACK = os.environ.get("STARR_ALLOW_TEXTURE_FALLBACK", "0").strip().lower() in ("1", "true", "yes")
+MAX_DONOR_REUSE       = _env_int("STARR_MAX_DONOR_REUSE", 1)
+
+# Covariates to EXCLUDE from VALUE-based matching (prefilter + Mahalanobis + SMD).
+#
+# precip_mm_yr: in GS Annex 1 Table A.3 Precipitation (MAP) is mandatory but
+# its tolerance is "Same Isohyet / Ecoregion" — i.e. a CATEGORICAL zone
+# constraint, NOT a value caliper (±mm). It must therefore be satisfied upstream,
+# not as a continuous covariate: the donor pool is already clipped to the
+# project's ECOREGION in GEE (rawDonorSearchGeom = buffer ∩ ecoregion), so the
+# "same ecoregion" requirement is met by construction.
+# Using it as a continuous value was wrong (and it decimated the pool: e.g. Muraca_Caia
+# 938k → 79k, -92%). If the "same isohyet" stringency is needed, add a
+# categorical match on rainfall bands (isohyets), not a tight caliper.
+# Set [] to (re)use all value-based covariates.
 EXCLUDE_COVARIATES_FROM_MATCHING = ["precip_mm_yr"]
 
-# Sottocartella di output di questo step — EDITABILE DAL NOTEBOOK (s02.STEP_DIRNAME).
-# Il livello OUTPUTS_DIRNAME/<RUN_ID> è ereditato dal path di Step 01
+# Output subfolder of this step — EDITABLE FROM THE NOTEBOOK (s02.STEP_DIRNAME).
+# The OUTPUTS_DIRNAME/<RUN_ID> level is inherited from the Step 01 path
 # (out_dir = base_dirs[0].parent / STEP_DIRNAME).
 STEP_DIRNAME = "02_matching"
 
-# ── BATCH KNN (FIX RAM) ───────────────────────────────────────────────
-# zp_w NON viene mai precalcolato per tutti i project pixel.
-# Lo scaling+whitening avviene on-the-fly per ogni batch.
-# Memoria per batch: KNN_BATCH_SIZE × n_cov × 8 byte (es. 4096 × 20 × 8 = 640 KB)
-# invece di 106K × n_cov × 8 = 17 MB tenuto in RAM permanentemente.
-KNN_BATCH_SIZE        = 4096  # project pixel per query KNN (on-the-fly whitened)
-KNN_N_JOBS            = -1
+# ── BATCH KNN (RAM FIX) ───────────────────────────────────────────────
+# zp_w is NEVER precomputed for all project pixels.
+# Scaling+whitening happens on-the-fly for each batch.
+# Memory per batch: KNN_BATCH_SIZE × n_cov × 8 bytes (e.g. 4096 × 20 × 8 = 640 KB)
+# instead of 106K × n_cov × 8 = 17 MB kept permanently in RAM.
+KNN_BATCH_SIZE        = 4096  # project pixels per KNN query (whitened on-the-fly)
+KNN_N_JOBS            = _env_int("STARR_KNN_N_JOBS", -1)
 KNN_LEAF_SIZE         = 60
-SCALER_FIT_MAX_ROWS   = 60_000   # campione per fit StandardScaler (proj+donor mix)
-COV_FIT_MAX_ROWS      = 40_000   # campione per LedoitWolf (proj+donor mix)
+SCALER_FIT_MAX_ROWS   = 60_000   # sample for the StandardScaler fit (proj+donor mix)
+COV_FIT_MAX_ROWS      = 40_000   # sample for LedoitWolf (proj+donor mix)
 
 # ── FIXED (GS STARR Annex 1 Table A.3) ───────────────────────────────
 
@@ -108,38 +134,38 @@ SMD_THRESHOLD                     = 0.1
 RIDGE_REG                         = 1e-6
 CALIPER_SOC_FRAC_OF_PROJECT_MEAN  = 0.10
 CALIPER_NDVI_T0_FRAC_OF_PROJECT_MEAN = 0.10
-CALIPER_ELEVATION_M               = 200.0   # massimo metodologico (GS Table A.3)
+CALIPER_ELEVATION_M               = 200.0   # methodological maximum (GS Table A.3)
 CALIPER_SLOPE_DEG                 = 10.0
 CALIPER_ROADS_KM                  = 1.0
 
-# Caliper elevation ADATTIVO. Su una PA quasi piatta (poca variabilità
-# altimetrica) il ±200 m non vincola nulla → l'elevation resta sbilanciato
-# (SMD alto). Se attivo, il caliper effettivo =
+# ADAPTIVE elevation caliper. On an almost flat PA (little elevation
+# variability) the ±200 m does not constrain anything → elevation stays unbalanced
+# (high SMD). If active, the effective caliper =
 #   clip(CALIPER_ELEVATION_SD_MULT × sd_elevation_PA,
 #        CALIPER_ELEVATION_MIN_M, CALIPER_ELEVATION_M)
-# → più stretto (più conservativo) per PA piatte, invariato (=200 m) per PA
-# con forte rilievo. Stringere è sempre ammesso (più conservativo del max GS).
-CALIPER_ELEVATION_ADAPTIVE        = False   # False → caliper fisso ±CALIPER_ELEVATION_M (200 m, valore GS Table A.3)
+# → tighter (more conservative) for flat PAs, unchanged (=200 m) for PAs
+# with strong relief. Tightening is always allowed (more conservative than the GS max).
+CALIPER_ELEVATION_ADAPTIVE        = False   # False → fixed caliper ±CALIPER_ELEVATION_M (200 m, GS Table A.3 value)
 CALIPER_ELEVATION_SD_MULT         = 4.0
 CALIPER_ELEVATION_MIN_M           = 5.0
 
-# Rimozione righe con covariate fisicamente non valide / nodata prima del
-# matching: SOC_g_kg <= MIN_VALID_SOC (0 = nodata HWSD/SoilGrids; il SOC qui
-# è in t/ha) e NDVI_t0 fuori [-1, 1]. Difende il pool dai valori spurii
-# (es. SOC=0 che entrava nel donor).
-DROP_INVALID_COVARIATES           = True
-MIN_VALID_SOC                     = 0.0
+# Removal of rows with physically invalid / nodata covariates before
+# matching: SOC_g_kg <= MIN_VALID_SOC (0 = nodata HWSD/SoilGrids; SOC here
+# is in t/ha) and NDVI_t0 outside [-1, 1]. Protects the pool from spurious values
+# (e.g. SOC=0 that was entering the donor).
+DROP_INVALID_COVARIATES           = os.environ.get("STARR_DROP_INVALID_COVARIATES", "1").strip().lower() in ("1", "true", "yes")
+MIN_VALID_SOC                     = float(os.environ.get("STARR_MIN_VALID_SOC", "0.0") or 0.0)
 
 # ── MANDATORY HARD CALIPERS (GS STARR Annex 1 Table A.3) ─────────────
-# B1 fix: queste colonne DEVONO esistere in proj_df e donor_df.
-# Se manca anche solo una banda, Step 02 si ferma con errore esplicito
-# (non più skip silenzioso). Mettere a False solo con giustificazione
-# documentata nel PDD per uno specifico caliper assente nel dataset.
+# B1 fix: these columns MUST exist in proj_df and donor_df.
+# If even a single band is missing, Step 02 stops with an explicit error
+# (no longer a silent skip). Set to False only with justification
+# documented in the PDD for a specific caliper absent in the dataset.
 REQUIRE_MANDATORY_CALIPERS = True
 MANDATORY_CALIPER_COLUMNS = [
-    "WRB2_CODE",      # → texture_class (match esatto)
-    "SOC_g_kg",       # ±10% media PA
-    "NDVI_t0",        # ±10% media PA
+    "WRB2_CODE",      # → texture_class (exact match)
+    "SOC_g_kg",       # ±10% PA mean
+    "NDVI_t0",        # ±10% PA mean
     "elevation",      # ±200 m
     "slope_deg",      # ±10°
     "dist_roads_km",  # ±1 km
@@ -149,27 +175,27 @@ TENURE_COLUMN_CANDIDATES = [
     "tenure_status", "Tenure", "TENURE", "legal_status", "LegalStatus", "LEGAL_STATUS"
 ]
 
-# ── WRB2_CODE → texture del suolo (legenda HWSD2 v2.0) ───────────────
-# RIALLINEATA alla numerazione REALE di HWSD2 (tabella D_WRB2code del
-# database HWSD2.mdb) e alla texture USDA DOMINANTE per gruppo di suolo,
-# ricavata data-driven da HWSD2_SMU.TEXTURE_USDA (dominante pesata per SHARE
-# sui 29.539 componenti del database).
+# ── WRB2_CODE → soil texture (HWSD2 v2.0 legend) ─────────────────────
+# REALIGNED to the REAL HWSD2 numbering (table D_WRB2code of the
+# HWSD2.mdb database) and to the DOMINANT USDA texture per soil group,
+# derived data-driven from HWSD2_SMU.TEXTURE_USDA (dominant weighted by SHARE
+# over the 29,539 components of the database).
 #
-# Sostituisce la tabella precedente 1–30 che NON seguiva la numerazione
-# HWSD2: es. il vecchio codice 12 era "loam" ma in HWSD2 il 12 = Glaciers;
-# il 16 era "clay_loam" ma è Islands (non-suoli). Il caliper texture era
-# quindi sistematicamente errato per i dati HWSD2.
+# Replaces the previous 1–30 table which did NOT follow the HWSD2
+# numbering: e.g. the old code 12 was "loam" but in HWSD2 the 12 = Glaciers;
+# the 16 was "clay_loam" but it is Islands (non-soils). The texture caliper was
+# therefore systematically wrong for HWSD2 data.
 #
-# Classi USDA(13) → 5 bucket STARR:
+# USDA classes(13) → 5 STARR buckets:
 #   clay        ← Clay heavy, Silty clay, Clay light, Sandy clay   {1,2,3,8}
 #   clay_loam   ← Silty clay loam, Clay loam, Sandy clay loam      {4,5,10}
 #   loam        ← Silt, Silt loam, Loam                            {6,7,9}
 #   sandy_loam  ← Sandy loam, Loamy sand                           {11,12}
 #   sand        ← Sand                                             {13}
 #
-# Codici non-suolo (12 Glaciers, 16 Islands, 34 Open Water, 35 No Data) e
-# Technosols (31, privo di dato texture in HWSD2) NON sono mappati → i pixel
-# relativi vengono scartati in Step 02 (con avviso diagnostico).
+# Non-soil codes (12 Glaciers, 16 Islands, 34 Open Water, 35 No Data) and
+# Technosols (31, lacking texture data in HWSD2) are NOT mapped → the
+# corresponding pixels are discarded in Step 02 (with a diagnostic warning).
 WRB_TO_TEXTURE = {
     1:"sandy_loam",   # Acrisols
     2:"loam",         # Alisols
@@ -203,11 +229,11 @@ WRB_TO_TEXTURE = {
     33:"clay",        # Vertisols
 }
 
-# Codici HWSD2 scartati DI PROPOSITO dal donor pool (non è un errore):
-#   - non-suoli: 12 Glaciers, 16 Islands, 34 Open Water, 35 No Data
-#   - antropici: 31 Technosols (non-analogo naturale, e privo di texture in HWSD2)
-# Se compaiono nel donor vengono rimossi in Step 02; la diagnostica li segnala
-# come "esclusi (attesi)" e NON come codici da aggiungere a WRB_TO_TEXTURE.
+# HWSD2 codes discarded ON PURPOSE from the donor pool (not an error):
+#   - non-soils: 12 Glaciers, 16 Islands, 34 Open Water, 35 No Data
+#   - anthropic: 31 Technosols (not a natural analogue, and lacking texture in HWSD2)
+# If they appear in the donor they are removed in Step 02; the diagnostics flags them
+# as "excluded (expected)" and NOT as codes to add to WRB_TO_TEXTURE.
 WRB_NONDONOR_CODES = {
     12: "Glaciers", 16: "Islands", 31: "Technosols(anthropic)",
     34: "OpenWater", 35: "NoData",
@@ -260,17 +286,17 @@ def assign_texture(df):
         raise ValueError("WRB2_CODE missing. Check GEE raster Step 01.")
     df["texture_class"] = df["WRB2_CODE"].apply(wrb_to_texture)
     before = len(df)
-    # Diagnostica: quali WRB2_CODE restano non mappati in WRB_TO_TEXTURE
-    # (→ scartati). Serve a evidenziare subito codici mancanti (es. 33) invece
-    # di far propagare l'errore a valle come "Donor vuoto dopo prefiltro".
+    # Diagnostics: which WRB2_CODE remain unmapped in WRB_TO_TEXTURE
+    # (→ discarded). Serves to immediately highlight missing codes (e.g. 33) instead
+    # of letting the error propagate downstream as "Donor empty after prefilter".
     unmapped = df.loc[df["texture_class"].isna(), "WRB2_CODE"]
     df = df[df["texture_class"].notna()].reset_index(drop=True)
     print(f"    WRB filter: {before:,} → {len(df):,} valid px")
     if len(unmapped) > 0:
         vc = unmapped.round().astype("Int64").value_counts().sort_values(ascending=False)
         frac = len(unmapped) / max(before, 1) * 100
-        # Separa i codici esclusi di proposito (non-suoli + Technosols) da quelli
-        # davvero inattesi (che meriterebbero di essere mappati).
+        # Separate the codes excluded on purpose (non-soils + Technosols) from those
+        # truly unexpected (which would deserve to be mapped).
         known = [(c, n) for c, n in vc.items() if int(c) in WRB_NONDONOR_CODES]
         other = [(c, n) for c, n in vc.items() if int(c) not in WRB_NONDONOR_CODES]
         if known:
@@ -296,12 +322,12 @@ def check_cols(df, cols, name):
 
 
 def drop_invalid_covariate_rows(df, name, verbose=True):
-    """Rimuove righe con covariate fisicamente impossibili / nodata.
+    """Removes rows with physically impossible / nodata covariates.
 
-    - SOC_g_kg <= MIN_VALID_SOC  (0 = nodata; il SOC è in t/ha)
-    - NDVI_t0 fuori [-1, 1]
+    - SOC_g_kg <= MIN_VALID_SOC  (0 = nodata; SOC is in t/ha)
+    - NDVI_t0 outside [-1, 1]
 
-    Difende il pool dai valori spurii (es. SOC=0 che inquinava il donor).
+    Protects the pool from spurious values (e.g. SOC=0 that was polluting the donor).
     """
     if not DROP_INVALID_COVARIATES:
         return df
@@ -331,10 +357,10 @@ def detect_tenure_col(proj_df, donor_df):
     return None
 
 
-# ── PREFILTRO (largo) ─────────────────────────────────────────────────
+# ── PREFILTER (wide) ──────────────────────────────────────────────────
 
 def auto_prefilter_donor(proj_df, donor_df, cont_covs):
-    """Filtro largo sul donor (±20% del range). I calipers esatti vengono dopo."""
+    """Wide filter on the donor (±20% of the range). The exact calipers come afterwards."""
     out = donor_df.copy()
     for col in cont_covs:
         if col not in proj_df.columns or col not in out.columns:
@@ -356,15 +382,15 @@ def auto_prefilter_donor(proj_df, donor_df, cont_covs):
 
 def build_plain_mahalanobis(z_sample, cont_covs):
     """
-    Plain Mahalanobis: Sigma^-1 via LedoitWolf su un campione.
+    Plain Mahalanobis: Sigma^-1 via LedoitWolf on a sample.
 
-    FIX METH: rimossi i pesi RF (metodologicamente scorretti per GS STARR).
-    La metrica è la plain D(i,j) = sqrt((Xi-Xj)' Sigma^-1 (Xi-Xj)).
+    METH FIX: removed the RF weights (methodologically incorrect for GS STARR).
+    The metric is the plain D(i,j) = sqrt((Xi-Xj)' Sigma^-1 (Xi-Xj)).
 
-    FIX RAM: accetta solo un campione (z_sample, al massimo COV_FIT_MAX_ROWS righe),
-    non l'intero array z_proj+z_donor (che sarebbe 406K righe in RAM).
+    RAM FIX: accepts only a sample (z_sample, at most COV_FIT_MAX_ROWS rows),
+    not the entire z_proj+z_donor array (which would be 406K rows in RAM).
 
-    Restituisce (metric=Sigma^-1+ridge, cov_orig=Sigma).
+    Returns (metric=Sigma^-1+ridge, cov_orig=Sigma).
     """
     n_cov = len(cont_covs)
     lw = LedoitWolf(assume_centered=False)
@@ -374,7 +400,7 @@ def build_plain_mahalanobis(z_sample, cont_covs):
     return metric, lw.covariance_
 
 
-# ── GC CONDIZIONALE ──────────────────────────────────────────────────
+# ── CONDITIONAL GC ───────────────────────────────────────────────────
 
 try:
     import psutil as _psutil; _PSUTIL = True
@@ -384,14 +410,14 @@ except ImportError:
 _GC_RAM_TRESH = 0.82
 
 def _gc(force=False):
-    """GC solo se RAM > soglia o force=True. Evita overhead nel hot loop."""
+    """GC only if RAM > threshold or force=True. Avoids overhead in the hot loop."""
     if force: gc.collect(); return
     if _PSUTIL and _psutil.virtual_memory().percent / 100.0 > _GC_RAM_TRESH:
         gc.collect()
 
 
 def adaptive_k(n_donor_pool, base_k=KNN_QUERY_CANDIDATES):
-    """Candidati adattativi: se il pool è piccolo, interroga tutto."""
+    """Adaptive candidates: if the pool is small, query everything."""
     return max(K_NEIGHBOURS, min(base_k, int(n_donor_pool * 0.95), n_donor_pool))
 
 
@@ -403,13 +429,13 @@ def build_whitening_matrix(metric):
     return scipy_cholesky(metric, lower=True)
 
 
-# ── PRE-CACHING NUMPY ARRAY PER DONOR ────────────────────────────────
+# ── PRE-CACHING NUMPY ARRAYS FOR DONOR ───────────────────────────────
 
 def _build_donor_arrays(donor_df, cont_covs, tenure_col, ctx):
     """
-    Pre-estrae le colonne rilevanti dal donor_df come array numpy.
-    Questo evita la chiamata a pandas iloc per ogni candidato durante
-    il check dei calipers (era il collo di bottiglia principale).
+    Pre-extracts the relevant columns from donor_df as numpy arrays.
+    This avoids the pandas iloc call for each candidate during
+    the caliper check (it was the main bottleneck).
     """
     arr = {}
     arr["texture_class"] = donor_df["texture_class"].values.astype(str)
@@ -426,34 +452,34 @@ def _build_donor_arrays(donor_df, cont_covs, tenure_col, ctx):
         else:
             arr[col] = None
 
-    # Precalcola il contesto di tolleranza
+    # Precompute the tolerance context
     arr["ctx"] = ctx
     return arr
 
 
-# ── CONTROLLO CALIPER VETTORIZZATO ────────────────────────────────────
+# ── VECTORIZED CALIPER CHECK ─────────────────────────────────────────
 
 def _check_calipers_vectorized(proj_row, cand_global_idx, donor_arr, ctx, tenure_col):
     """
-    Controlla i calipers su TUTTI i candidati in una sola passata numpy.
-    
-    Input:
-      proj_row:        Series (riga pandas del pixel di progetto)
-      cand_global_idx: array int, indici globali nel donor_df dei candidati KNN
-      donor_arr:       dict di array numpy pre-estratti dal donor_df
+    Checks the calipers on ALL candidates in a single numpy pass.
 
-    Restituisce:
-      passes: array bool di lunghezza len(cand_global_idx)
-      n_rejected: int, numero di candidati rifiutati
+    Input:
+      proj_row:        Series (pandas row of the project pixel)
+      cand_global_idx: int array, global indices in donor_df of the KNN candidates
+      donor_arr:       dict of numpy arrays pre-extracted from donor_df
+
+    Returns:
+      passes: bool array of length len(cand_global_idx)
+      n_rejected: int, number of rejected candidates
     """
     n      = len(cand_global_idx)
     passes = np.ones(n, dtype=bool)
 
-    # 1. Texture esatta
+    # 1. Exact texture
     proj_tex = str(proj_row.get("texture_class", ""))
     passes  &= (donor_arr["texture_class"][cand_global_idx] == proj_tex)
 
-    # 2. Tenure esatta (se disponibile)
+    # 2. Exact tenure (if available)
     if donor_arr["tenure"] is not None and tenure_col:
         proj_ten = str(proj_row.get(tenure_col, ""))
         passes  &= (donor_arr["tenure"][cand_global_idx] == proj_ten)
@@ -470,20 +496,20 @@ def _check_calipers_vectorized(proj_row, cand_global_idx, donor_arr, ctx, tenure
         if np.isfinite(pv):
             passes &= np.abs(donor_arr["NDVI_t0"][cand_global_idx] - pv) <= ctx["ndvi_tol"]
 
-    # 5. Elevazione (caliper adattivo: ctx["elev_tol"], default ±200 m)
+    # 5. Elevation (adaptive caliper: ctx["elev_tol"], default ±200 m)
     if donor_arr["elevation"] is not None:
         pv = float(proj_row.get("elevation", np.nan))
         if np.isfinite(pv):
             _elev_tol = ctx.get("elev_tol", CALIPER_ELEVATION_M)
             passes &= np.abs(donor_arr["elevation"][cand_global_idx] - pv) <= _elev_tol
 
-    # 6. Pendenza ±10°
+    # 6. Slope ±10°
     if donor_arr["slope_deg"] is not None:
         pv = float(proj_row.get("slope_deg", np.nan))
         if np.isfinite(pv):
             passes &= np.abs(donor_arr["slope_deg"][cand_global_idx] - pv) <= CALIPER_SLOPE_DEG
 
-    # 7. Strade ±1 km
+    # 7. Roads ±1 km
     if donor_arr["dist_roads_km"] is not None:
         pv = float(proj_row.get("dist_roads_km", np.nan))
         if np.isfinite(pv):
@@ -497,17 +523,17 @@ def _check_calipers_vectorized(proj_row, cand_global_idx, donor_arr, ctx, tenure
 
 def validate_mandatory_calipers(proj_df, donor_df):
     """
-    B1 fix: fail esplicito se manca una banda caliper obbligatoria.
+    B1 fix: explicit fail if a mandatory caliper band is missing.
 
-    Controlla che ogni colonna in MANDATORY_CALIPER_COLUMNS sia presente in
-    ENTRAMBI proj_df e donor_df. Senza queste bande il caliper corrispondente
-    verrebbe saltato silenziosamente e il match passerebbe su meno vincoli di
-    quanti l'Annex 1 Table A.3 richiede.
+    Checks that every column in MANDATORY_CALIPER_COLUMNS is present in
+    BOTH proj_df and donor_df. Without these bands the corresponding caliper
+    would be silently skipped and the match would pass on fewer constraints than
+    Annex 1 Table A.3 requires.
     """
     if not REQUIRE_MANDATORY_CALIPERS:
         return
     def _ok(df, c):
-        # WRB2_CODE può essere già stato convertito in texture_class.
+        # WRB2_CODE may already have been converted to texture_class.
         if c == "WRB2_CODE":
             return ("WRB2_CODE" in df.columns) or ("texture_class" in df.columns)
         return c in df.columns
@@ -530,11 +556,11 @@ def validate_mandatory_calipers(proj_df, donor_df):
 
 def stratified_donor_cap(donor_df, sample_n, strat_col="texture_class", seed=42):
     """
-    B2 fix: cap donor STRATIFICATO per texture (non campione casuale).
+    B2 fix: donor cap STRATIFIED by texture (not a random sample).
 
-    Mantiene la proporzione di ogni gruppo texture nel campione, così le texture
-    rare non vengono sottorappresentate. Se strat_col manca, ricade su campione
-    casuale (con warning).
+    Keeps the proportion of each texture group in the sample, so that rare
+    textures are not underrepresented. If strat_col is missing, falls back to a
+    random sample (with warning).
     """
     n_total = len(donor_df)
     if sample_n is None or n_total <= int(sample_n):
@@ -549,13 +575,13 @@ def stratified_donor_cap(donor_df, sample_n, strat_col="texture_class", seed=42)
     frac = sample_n / n_total
     parts = []
     for _, grp in donor_df.groupby(strat_col, sort=False):
-        # almeno 1 riga per gruppo non vuoto; arrotonda per difetto altrove
+        # at least 1 row per non-empty group; round down elsewhere
         n_grp = max(1, int(round(len(grp) * frac)))
         n_grp = min(n_grp, len(grp))
         idx = rng.choice(grp.index.to_numpy(), size=n_grp, replace=False)
         parts.append(donor_df.loc[idx])
     out = pd.concat(parts).reset_index(drop=True)
-    # ribilancia se l'arrotondamento ha superato/mancato il target
+    # rebalance if rounding exceeded/missed the target
     if len(out) > sample_n:
         out = out.sample(sample_n, random_state=seed).reset_index(drop=True)
     print(f"    STRATIFIED donor cap by {strat_col}: "
@@ -565,26 +591,26 @@ def stratified_donor_cap(donor_df, sample_n, strat_col="texture_class", seed=42)
 
 def run_matching(proj_df, donor_df, weights_dict, cont_covs, meta):
     """
-    Matching stratificato per texture WRB2 con calipers hard vettorizzati.
+    Matching stratified by WRB2 texture with vectorized hard calipers.
 
-    La logica KNN è adattata dal QGIS PlotMatcherAlgorithm:
-      - stessa metrica Mahalanobis (VI = Σ^-1 pesata)
-      - ma usa whitening + ball_tree invece di cdist brute-force
-        (cdist è O(n*m) e non scala oltre 50k pixel donor)
-      - i calipers hard vengono applicati vettorialmente sui candidati KNN
-        invece di un loop Python per candidato (collo di bottiglia eliminato)
+    The KNN logic is adapted from the QGIS PlotMatcherAlgorithm:
+      - same Mahalanobis metric (VI = weighted Σ^-1)
+      - but uses whitening + ball_tree instead of brute-force cdist
+        (cdist is O(n*m) and does not scale beyond 50k donor pixels)
+      - the hard calipers are applied vectorially on the KNN candidates
+        instead of a Python loop per candidate (bottleneck eliminated)
     """
-    # B1: fail esplicito su bande caliper mancanti PRIMA di qualsiasi calcolo.
+    # B1: explicit fail on missing caliper bands BEFORE any computation.
     validate_mandatory_calipers(proj_df, donor_df)
 
-    # B2: cap donor stratificato per texture (era campione casuale).
+    # B2: donor cap stratified by texture (it was a random sample).
     if N_DONOR_SAMPLE is not None and len(donor_df) > int(N_DONOR_SAMPLE):
         donor_df = stratified_donor_cap(donor_df, N_DONOR_SAMPLE, strat_col="texture_class")
 
     check_cols(proj_df,  cont_covs + ["lon", "lat", "texture_class"], "project_df")
     check_cols(donor_df, cont_covs + ["lon", "lat", "texture_class"], "donor_df")
 
-    # Contesto calipers — colonne ora garantite presenti (validate_mandatory_calipers)
+    # Caliper context — columns now guaranteed present (validate_mandatory_calipers)
     tenure_col = detect_tenure_col(proj_df, donor_df)
     ctx = {"tenure_col": tenure_col}
     _soc_mean = float(proj_df["SOC_g_kg"].mean()) if "SOC_g_kg" in proj_df.columns else np.nan
@@ -598,7 +624,7 @@ def run_matching(proj_df, donor_df, weights_dict, cont_covs, meta):
     ctx["soc_tol"]  = max(abs(_soc_mean)  * CALIPER_SOC_FRAC_OF_PROJECT_MEAN, 1e-9)
     ctx["ndvi_tol"] = max(abs(_ndvi_mean) * CALIPER_NDVI_T0_FRAC_OF_PROJECT_MEAN, 1e-9)
 
-    # Caliper elevation adattivo alla variabilità altimetrica della PA.
+    # Elevation caliper adaptive to the PA's elevation variability.
     _elev_std = float(proj_df["elevation"].std()) if "elevation" in proj_df.columns else np.nan
     if CALIPER_ELEVATION_ADAPTIVE and np.isfinite(_elev_std) and _elev_std > 0:
         ctx["elev_tol"] = float(np.clip(CALIPER_ELEVATION_SD_MULT * _elev_std,
@@ -618,21 +644,21 @@ def run_matching(proj_df, donor_df, weights_dict, cont_covs, meta):
     print(f"      slope         : ±{CALIPER_SLOPE_DEG:.0f}°")
     print(f"      dist_roads    : ±{CALIPER_ROADS_KM:.1f} km")
 
-    # ── SCALING + WHITENING + KNN BATCH (FIX RAM) ───────────────────────
+    # ── SCALING + WHITENING + KNN BATCH (RAM FIX) ───────────────────────
     #
-    # PROBLEMA (OOM con 106K project pixel):
+    # PROBLEM (OOM with 106K project pixels):
     #   z_all = scaler.fit_transform(pd.concat([proj, donor]))  -> 406K x n_cov RAM
-    #   zp_w  = z_proj @ L                                      -> 106K x n_cov permanente
-    #   knn.kneighbors(zp_w[proj_idx]) su tutti 106K            -> (106K x 300) x 16 byte = 508 MB output
+    #   zp_w  = z_proj @ L                                      -> 106K x n_cov permanent
+    #   knn.kneighbors(zp_w[proj_idx]) on all 106K             -> (106K x 300) x 16 bytes = 508 MB output
     #
-    # FIX: zp_w NON viene mai precalcolato per tutti i project pixel.
-    # Scale + whitening vengono applicati on-the-fly per KNN_BATCH_SIZE pixel alla volta.
-    # RAM per batch: 4096 x n_cov x 8 = 640 KB invece di 17 MB in RAM permanente.
+    # FIX: zp_w is NEVER precomputed for all project pixels.
+    # Scale + whitening are applied on-the-fly for KNN_BATCH_SIZE pixels at a time.
+    # RAM per batch: 4096 x n_cov x 8 = 640 KB instead of 17 MB in permanent RAM.
 
     rng   = np.random.default_rng(42)
     n_cov = len(cont_covs)
 
-    # 1. Fit scaler su campione (no concat full proj+donor in RAM)
+    # 1. Fit scaler on a sample (no full proj+donor concat in RAM)
     n_p_s = min(len(proj_df),  SCALER_FIT_MAX_ROWS // 2)
     n_d_s = min(len(donor_df), SCALER_FIT_MAX_ROWS // 2)
     Xp_s  = proj_df.iloc[rng.choice(len(proj_df),  n_p_s, replace=False)][cont_covs].to_numpy(dtype=np.float64)
@@ -640,28 +666,31 @@ def run_matching(proj_df, donor_df, weights_dict, cont_covs, meta):
     scaler = StandardScaler()
     scaler.fit(np.vstack([Xp_s, Xd_s]))
 
-    # 2. LedoitWolf su campione scalato (no concat intero proj+donor)
+    # 2. LedoitWolf on the scaled sample (no full proj+donor concat)
     z_samp = np.vstack([scaler.transform(Xp_s), scaler.transform(Xd_s)]).astype(np.float64)
     del Xp_s, Xd_s
     metric, cov_orig = build_plain_mahalanobis(z_samp, cont_covs)
     del z_samp
     L = build_whitening_matrix(metric).astype(np.float64)
 
-    # 3. Trasforma + whiten TUTTO il donor (necessario per l'indice KNN)
-    #    Max 300K x n_cov x 8 = 48 MB — accettabile
+    # 3. Transform + whiten the WHOLE donor (needed for the KNN index)
+    #    Max 300K x n_cov x 8 = 48 MB — acceptable
     Xd_full = donor_df[cont_covs].to_numpy(dtype=np.float64)
     zdw     = (scaler.transform(Xd_full) @ L).astype(np.float64)
     del Xd_full
     gc.collect()
 
-    # 4. KNN globale su tutto il donor whitened (costruito UNA SOLA VOLTA)
-    k_global = min(max(K_NEIGHBOURS, KNN_QUERY_CANDIDATES), len(zdw))
-    knn_global = NearestNeighbors(
-        n_neighbors=k_global, metric="euclidean",
-        algorithm="ball_tree", leaf_size=KNN_LEAF_SIZE, n_jobs=KNN_N_JOBS
-    )
-    knn_global.fit(zdw)
-    print(f"    Global KNN: {len(zdw):,} donor | k={k_global} | n_jobs={KNN_N_JOBS}")
+    # 4. KNN is built PER-TEXTURE GROUP inside the loop below (NOT one global
+    #    index). This is the fix for the texture-starvation bug: a single global
+    #    KNN returns the k_global nearest donors across ALL textures, and the
+    #    same-texture ones are then filtered out AFTERWARDS. If the project's
+    #    texture is a minority in the donor pool, few (or zero) of those global
+    #    neighbours share the texture → the pixel is left unmatched even though
+    #    plenty of same-texture donors exist. Building the KNN on the
+    #    same-texture donor subset guarantees every project pixel receives up to
+    #    KNN_QUERY_CANDIDATES SAME-TEXTURE candidates before the hard calipers.
+    print(f"    Per-texture KNN (whitened Mahalanobis) | candidates={KNN_QUERY_CANDIDATES} "
+          f"| n_jobs={KNN_N_JOBS}")
     print(f"    RAM FIX: zp_w on-the-fly per batch of {KNN_BATCH_SIZE} px (never 106K in memory)")
 
     donor_df   = donor_df.reset_index(drop=True)
@@ -698,36 +727,43 @@ def run_matching(proj_df, donor_df, weights_dict, cont_covs, meta):
         if not len(d_global):
             continue
 
-        k_query = adaptive_k(len(d_global))
+        # Per-texture KNN index: built on the SAME-TEXTURE whitened donor subset
+        # only, so every candidate returned already matches the texture caliper.
+        k_query   = min(max(K_NEIGHBOURS, KNN_QUERY_CANDIDATES), len(d_global))
+        zdw_tex   = zdw[d_global]
+        knn_tex   = NearestNeighbors(
+            n_neighbors=k_query, metric="euclidean",
+            algorithm="ball_tree", leaf_size=KNN_LEAF_SIZE, n_jobs=KNN_N_JOBS
+        )
+        knn_tex.fit(zdw_tex)
 
         n_matched = n_unmatched = rejected_total = 0
         dist_sum  = dist_n = 0.0
 
-        # ── BATCH LOOP: scale+whiten on-the-fly per KNN_BATCH_SIZE pixel ──────
+        # ── BATCH LOOP: scale+whiten on-the-fly for KNN_BATCH_SIZE pixels ─────
         for start in range(0, len(proj_idx), KNN_BATCH_SIZE):
             batch = proj_idx[start : start + KNN_BATCH_SIZE]
 
-            # ON-THE-FLY: scala + whiten solo questo batch
-            # RAM: KNN_BATCH_SIZE x n_cov x 8 = 640 KB (non 17 MB)
+            # ON-THE-FLY: scale + whiten only this batch
+            # RAM: KNN_BATCH_SIZE x n_cov x 8 = 640 KB (not 17 MB)
             Xp_b  = proj_df.loc[batch, cont_covs].to_numpy(dtype=np.float64)
             zpw_b = (scaler.transform(Xp_b) @ L).astype(np.float64)
             del Xp_b
 
-            # Query KNN globale
-            dists_g, idx_g = knn_global.kneighbors(zpw_b)
+            # Per-texture KNN query (every candidate is already same-texture)
+            dists_t, idx_t = knn_tex.kneighbors(zpw_b)
             del zpw_b
 
             for row_i in range(len(batch)):
                 pi = int(batch[row_i])
                 pr = proj_df.loc[pi]
 
-                # Filtra per texture sul risultato globale
-                cands_all   = idx_g[row_i]
-                dists_all   = dists_g[row_i]
-                tex_ok      = np.isin(donor_arr["texture_class"][cands_all],
-                                       [str(a) for a in allowed])
-                cand_global = cands_all[tex_ok][:k_query]
-                cand_dists  = dists_all[tex_ok][:k_query]
+                # Map local indices (into the same-texture subset) back to the
+                # global donor_df indices. No texture post-filter is needed
+                # because knn_tex was fitted on same-texture donors only.
+                cand_local  = idx_t[row_i]
+                cand_global = d_global[cand_local]
+                cand_dists  = dists_t[row_i]
 
                 if len(cand_global) == 0:
                     n_unmatched += 1
@@ -747,55 +783,65 @@ def run_matching(proj_df, donor_df, weights_dict, cont_covs, meta):
                                            "queried_n": int(k_query)})
                     continue
 
-                best_local  = int(passing_local[0])
-                best_global = int(cand_global[best_local])
-                best_dist   = float(cand_dists[best_local])
-                reuse       = int(donor_reuse[best_global])
-                exceeded    = bool(reuse >= MAX_DONOR_REUSE)
-                donor_reuse[best_global] += 1
+                # ── K:1 SELECTION ─────────────────────────────────────────────
+                # Select up to K_NEIGHBOURS best passing donors (already ordered
+                # by ascending match distance); each becomes one reference record
+                # for this project pixel. K_NEIGHBOURS=1 → classic 1:1 matching.
+                # MAX_DONOR_REUSE is FLAGGED (reuse_exceeded) but not blocked, so
+                # a donor may serve several project pixels; Step 05 already uses
+                # the count of UNIQUE reference pixels as the effective N for the CI.
+                sel_locals = passing_local[:max(1, K_NEIGHBOURS)]
+                for knn_order, sel_local in enumerate(sel_locals, start=1):
+                    sel_local   = int(sel_local)
+                    sel_global  = int(cand_global[sel_local])
+                    sel_dist    = float(cand_dists[sel_local])
+                    reuse       = int(donor_reuse[sel_global])
+                    exceeded    = bool(reuse >= MAX_DONOR_REUSE)
+                    donor_reuse[sel_global] += 1
 
-                dr  = donor_df.iloc[best_global]
-                rec = {c: dr.get(c) for c in donor_df.columns if c != "_gidx"}
-                rec.update({
-                    "run_id":         run_id,
-                    "ref_lon":        float(dr["lon"]),
-                    "ref_lat":        float(dr["lat"]),
-                    "proj_lon":       float(pr["lon"]),
-                    "proj_lat":       float(pr["lat"]),
-                    "match_distance": best_dist,
-                    "match_rank":     int(best_local + 1),
-                    "proj_idx":       pi,
-                    "proj_texture":   str(texture),
-                    "ref_texture":    str(dr.get("texture_class", "")),
-                    "texture_exact":  bool(exact),
-                    "reuse_exceeded": exceeded,
-                    "all_calipers_passed": True,
-                    "hard_caliper_rejected_before_selected": n_rej,
-                })
-                # B3 fix: propaga i bounds nativi del pixel donor con prefisso ref_
-                # così Step 04 usa il footprint raster reale (no centroid fallback).
-                for _src, _dst in [
-                    ("cell_xmin", "ref_cell_xmin"), ("cell_ymin", "ref_cell_ymin"),
-                    ("cell_xmax", "ref_cell_xmax"), ("cell_ymax", "ref_cell_ymax"),
-                    ("pixel_id",  "ref_pixel_id"),
-                    ("grid_row",  "ref_grid_row"), ("grid_col",  "ref_grid_col"),
-                ]:
-                    if _src in dr.index:
-                        rec[_dst] = dr[_src]
-                # proj_/ref_/diff_ per OGNI covariata di matching (non solo le 5
-                # obbligatorie) così i diagnostici per-covariata sono self-contained.
-                _pair_cols = list(dict.fromkeys(
-                    ["SOC_g_kg", "NDVI_t0", "elevation", "slope_deg", "dist_roads_km"]
-                    + list(cont_covs)))
-                for c in _pair_cols:
-                    if c in pr.index and c in dr.index:
-                        rec[f"proj_{c}"] = float(pr[c])
-                        rec[f"ref_{c}"]  = float(dr[c])
-                        rec[f"diff_{c}"] = float(dr[c]) - float(pr[c])
-                records.append(rec)
-                n_matched += 1
+                    dr  = donor_df.iloc[sel_global]
+                    rec = {c: dr.get(c) for c in donor_df.columns if c != "_gidx"}
+                    rec.update({
+                        "run_id":         run_id,
+                        "ref_lon":        float(dr["lon"]),
+                        "ref_lat":        float(dr["lat"]),
+                        "proj_lon":       float(pr["lon"]),
+                        "proj_lat":       float(pr["lat"]),
+                        "match_distance": sel_dist,
+                        "match_rank":     int(sel_local + 1),
+                        "match_knn_order": int(knn_order),   # 1..K_NEIGHBOURS (K:1 matching)
+                        "proj_idx":       pi,
+                        "proj_texture":   str(texture),
+                        "ref_texture":    str(dr.get("texture_class", "")),
+                        "texture_exact":  bool(exact),
+                        "reuse_exceeded": exceeded,
+                        "all_calipers_passed": True,
+                        "hard_caliper_rejected_before_selected": n_rej,
+                    })
+                    # B3 fix: propagate the donor pixel's native bounds with ref_ prefix
+                    # so Step 04 uses the real raster footprint (no centroid fallback).
+                    for _src, _dst in [
+                        ("cell_xmin", "ref_cell_xmin"), ("cell_ymin", "ref_cell_ymin"),
+                        ("cell_xmax", "ref_cell_xmax"), ("cell_ymax", "ref_cell_ymax"),
+                        ("pixel_id",  "ref_pixel_id"),
+                        ("grid_row",  "ref_grid_row"), ("grid_col",  "ref_grid_col"),
+                    ]:
+                        if _src in dr.index:
+                            rec[_dst] = dr[_src]
+                    # proj_/ref_/diff_ for EVERY matching covariate (not just the 5
+                    # mandatory ones) so the per-covariate diagnostics are self-contained.
+                    _pair_cols = list(dict.fromkeys(
+                        ["SOC_g_kg", "NDVI_t0", "elevation", "slope_deg", "dist_roads_km"]
+                        + list(cont_covs)))
+                    for c in _pair_cols:
+                        if c in pr.index and c in dr.index:
+                            rec[f"proj_{c}"] = float(pr[c])
+                            rec[f"ref_{c}"]  = float(dr[c])
+                            rec[f"diff_{c}"] = float(dr[c]) - float(pr[c])
+                    records.append(rec)
+                    n_matched += 1
 
-            del dists_g, idx_g
+            del dists_t, idx_t
             _gc()
 
         tex_rows.append({
@@ -819,7 +865,7 @@ def run_matching(proj_df, donor_df, weights_dict, cont_covs, meta):
     return matched, pd.DataFrame(tex_rows), unmatched
 
 
-# ── VALIDAZIONE ───────────────────────────────────────────────────────
+# ── VALIDATION ────────────────────────────────────────────────────────
 
 def compute_smd(proj_df, ref_df, covs):
     rows = []
@@ -856,7 +902,7 @@ def compute_caliper_audit(matched_df):
     return pd.DataFrame(rows)
 
 
-# ── GRAFICO ──────────────────────────────────────────────────────────
+# ── PLOT ─────────────────────────────────────────────────────────────
 
 def plot_rf_weights(imp_df, out_dir=None):
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
@@ -1004,7 +1050,7 @@ def plot_covariate_pairs(proj_df, matched_df, smd_df, cont_covs,
 def run_matching_step(base_dirs=None, output_dir=None,
                       proj_df=None, donor_df=None, meta=None, verbose=True):
     """
-    Restituisce (matched_df, weights_dict, imp_df, smd_df, figs, out_dir).
+    Returns (matched_df, weights_dict, imp_df, smd_df, figs, out_dir).
     """
     if base_dirs is None:
         raise RuntimeError(
@@ -1050,14 +1096,14 @@ def run_matching_step(base_dirs=None, output_dir=None,
     check_cols(donor_df, cont_covs + ["WRB2_CODE", "lon", "lat"], "donor_df")
 
     print("\n[1] Texture WRB...")
-    # B1: fail esplicito su bande caliper obbligatorie PRIMA di trasformare i dati.
+    # B1: explicit fail on mandatory caliper bands BEFORE transforming the data.
     validate_mandatory_calipers(proj_df, donor_df)
     proj_df  = assign_texture(proj_df)
     donor_df = assign_texture(donor_df)
 
     proj_df  = proj_df.dropna(subset=cont_covs).reset_index(drop=True)
     donor_df = donor_df.dropna(subset=cont_covs).reset_index(drop=True)
-    # Rimozione outlier/nodata fisicamente non validi (SOC<=0, NDVI fuori range)
+    # Removal of physically invalid outliers/nodata (SOC<=0, NDVI out of range)
     proj_df  = drop_invalid_covariate_rows(proj_df,  "PROJECT")
     donor_df = drop_invalid_covariate_rows(donor_df, "DONOR")
     print(f"    Project: {len(proj_df):,} | Donor: {len(donor_df):,}")
@@ -1067,7 +1113,7 @@ def run_matching_step(base_dirs=None, output_dir=None,
     print("\n[2] Donor prefilter (wide)...")
     donor_df = auto_prefilter_donor(proj_df, donor_df, cont_covs)
 
-    weights_dict = {c: 1.0 for c in cont_covs}  # plain Mahalanobis: pesi uniformi (no RF)
+    weights_dict = {c: 1.0 for c in cont_covs}  # plain Mahalanobis: uniform weights (no RF)
     imp_df = None
 
     print("\n[3] KNN plain Mahalanobis matching + hard calipers (batched, without RF)...")
@@ -1096,7 +1142,7 @@ def run_matching_step(base_dirs=None, output_dir=None,
     # ndvi_smd_df = compute_smd(proj_df, matched_df, ndvi_year_cols) \
     #               if ndvi_year_cols else pd.DataFrame()
     # if not ndvi_smd_df.empty:
-    #     print("\n    Bilanciamento NDVI annuale:")
+    #     print("\n    Annual NDVI balance:")
     #     for cov, row in ndvi_smd_df.iterrows():
     #         print(f"    {'PASS' if row['passed'] else 'FAIL':4s} {cov:20s}: SMD={row['SMD']:.4f}")
 
@@ -1117,7 +1163,7 @@ def run_matching_step(base_dirs=None, output_dir=None,
     }
     fig_p = plot_covariate_pairs(proj_df, matched_df, smd_df, cont_covs, caliper_tol, out_dir)
     # fig_n = plot_smd(ndvi_smd_df, out_dir, "SMD_annual_NDVI.png",
-                    #  "Bilanciamento NDVI annuale") if not ndvi_smd_df.empty else None
+                    #  "Annual NDVI balance") if not ndvi_smd_df.empty else None
 
     matched_df.to_parquet(out_dir / "reference_area_pixels.parquet", index=False)
     matched_df.to_csv(out_dir / "reference_area_pixels.csv", index=False)

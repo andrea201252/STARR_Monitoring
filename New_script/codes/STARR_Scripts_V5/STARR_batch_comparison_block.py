@@ -1,13 +1,13 @@
 # =====================================================================
-# §8. CONFRONTO BATCH — multi-sorgente × multi-periodo (automatico)
+# §8. BATCH COMPARISON — multi-source × multi-period (automatic)
 # =====================================================================
-# Esegue Step 05 per OGNI combinazione (sorgente AGB × periodo), riusando
-# la stessa Reference Area bloccata (Step 01-04 girano UNA volta: il matching
-# è su covariate statiche, non sull'AGB). Salva i risultati in un folder
-# dedicato, distinti per input e per anni, + un CSV/JSON master di confronto.
+# Runs Step 05 for EVERY combination (AGB source × period), reusing
+# the same locked Reference Area (Step 01-04 run ONCE: the matching
+# is on static covariates, not on AGB). Saves the results in a dedicated
+# folder, distinct by input and by years, + a master comparison CSV/JSON.
 #
-# Richieste implementate:
-#   - ALLOW_NEGATIVE_BASELINE = True  (baseline calcolato anche se <= 0, richiesta PM)
+# Implemented requests:
+#   - ALLOW_NEGATIVE_BASELINE = True  (baseline computed even if <= 0, PM request)
 #   - ROOT_TO_SHOOT_RATIO     = 0.4   (shrubland)
 # =====================================================================
 import json, time, traceback
@@ -17,7 +17,7 @@ import pandas as pd
 assert s05 is not None, "Step 05 script not loaded (s05 is None)."
 assert 'twin_pixels' in globals(), "twin_pixels missing: run Step 01-04 first."
 
-# Risolvi manifest/area come nella cella §7
+# Resolve manifest/area as in cell §7
 _manifest = globals().get('manifest', None)
 if _manifest is None:
     _mpath = OUTPUT_ROOT / '04_reference_area' / 'reference_area_FINAL_manifest.json'
@@ -26,15 +26,15 @@ _area_ha = float(globals().get('PROJECT_AREA_HA_RESOLVED',
                                 globals().get('PROJECT_AREA_HA', 0.0)))
 assert _area_ha > 0, "PROJECT_AREA_HA not resolved (>0)."
 
-# ── Override espliciti richiesti ─────────────────────────────────────
-s05.ALLOW_NEGATIVE_BASELINE = True       # baseline anche sotto zero (PM)
+# ── Explicit overrides requested ─────────────────────────────────────
+s05.ALLOW_NEGATIVE_BASELINE = True       # baseline even below zero (PM)
 s05.ROOT_TO_SHOOT_RATIO     = 0.4        # shrubland BGB
 print(f"ALLOW_NEGATIVE_BASELINE = {s05.ALLOW_NEGATIVE_BASELINE} | "
       f"ROOT_TO_SHOOT_RATIO = {s05.ROOT_TO_SHOOT_RATIO}")
 
-DRY_RUN = False   # True = controlla solo l'esistenza dei file, non esegue
+DRY_RUN = False   # True = only checks the existence of the files, does not run
 
-# ── Sorgenti AGB: cartella + template nome file (serializzato su {y}) ──
+# ── AGB sources: folder + filename template (serialized on {y}) ──
 DRIVE = Path('/content/drive/MyDrive')
 AGB_SOURCES = {
     'GEDI_embedding': {
@@ -59,13 +59,13 @@ AGB_SOURCES = {
     },
 }
 
-# ── Periodi (start, end), tutti >= 4 anni ────────────────────────────
+# ── Periods (start, end), all >= 4 years ─────────────────────────────
 PERIODS = [
     (2018, 2022), (2018, 2023), (2018, 2024), (2018, 2025),
     (2019, 2023), (2019, 2024), (2019, 2025), (2020, 2024),
 ]
 
-# ── Folder di output dedicato ────────────────────────────────────────
+# ── Dedicated output folder ──────────────────────────────────────────
 _stamp    = time.strftime('%Y%m%d_%H%M%S')
 BATCH_DIR = COMPARISON_DIR / f'batch_AGB_comparison_{_stamp}'
 BATCH_DIR.mkdir(parents=True, exist_ok=True)
@@ -123,7 +123,7 @@ for src_key, cfg in AGB_SOURCES.items():
         donor_spec   = _spec(src_key, cfg['donor'],   y0, y1)
         project_spec = _spec(src_key, cfg['project'], y0, y1)
 
-        # Controllo esistenza dei 4 file
+        # Check existence of the 4 files
         paths = [donor_spec['stock_t0_raster'], donor_spec['stock_y_raster'],
                  project_spec['stock_t0_raster'], project_spec['stock_y_raster']]
         missing = [p for p in paths if not Path(p).exists()]
@@ -161,7 +161,7 @@ for src_key, cfg in AGB_SOURCES.items():
             )
             row = _curate(src_key, y0, y1, ci_summary)
             rows.append(row)
-            # salva il summary completo per-run
+            # save the complete per-run summary
             with open(out_dir / 'ci_summary.json', 'w') as f:
                 json.dump(ci_summary, f, indent=2, default=str)
             print(f"[{n_done}/{n_total}] OK   {tag} | "

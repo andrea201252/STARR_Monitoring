@@ -1,21 +1,21 @@
 # -*- coding: utf-8 -*-
 """
-GS STARR Track 1 SEMDB — runner parametrico (Steps 01-05).
+GS STARR Track 1 SEMDB — parametric runner (Steps 01-05).
 
-Parametro chiave: DONOR_EXTENT_KM
+Key parameter: DONOR_EXTENT_KM
 ─────────────────────────────────
-Controlla l'estensione del pool donor attorno al bordo della PA.
-Viene passato a Step 01 che applica il clip I/O PRIMA di caricare i raster.
-Ogni extent genera una directory output isolata (run_id include il suffisso).
+Controls the extent of the donor pool around the PA border.
+It is passed to Step 01 which applies the I/O clip BEFORE loading the rasters.
+Each extent generates an isolated output directory (run_id includes the suffix).
 
-  "full"  → nessun clip (comportamento originale)
-  5       → buffer 5 km
-  10      → buffer 10 km  (punto di partenza raccomandato)
-  20      → buffer 20 km
-  30      → buffer 30 km
+  "full"  → no clip (original behavior)
+  5       → 5 km buffer
+  10      → 10 km buffer  (recommended starting point)
+  20      → 20 km buffer
+  30      → 30 km buffer
 
-Step 02 viene chiamato intenzionalmente con donor_df=None.
-Step 05 richiede la variazione dello stock di carbonio monitorata (controllata esternamente).
+Step 02 is intentionally called with donor_df=None.
+Step 05 requires the monitored carbon stock change (controlled externally).
 """
 
 import gc
@@ -26,30 +26,30 @@ HERE = Path(__file__).resolve().parent
 
 
 # ══════════════════════════════════════════════════════════════════════
-# CONFIG — unica sezione da modificare tra un run e l'altro
+# CONFIG — the only section to modify between one run and another
 # ══════════════════════════════════════════════════════════════════════
 
 DONOR_EXTENT_KM: float | str = 10   # "full" | 5 | 10 | 20 | 30
 
-# Identificatore base del run (usato per nomi file TIF e directory output).
-# Deve corrispondere al prefisso dei TIF esportati da GEE:
+# Base run identifier (used for TIF file names and output directory).
+# Must match the prefix of the TIFs exported by GEE:
 #   covariates_project_<RUN_ID_BASE>*.tif
 #   covariates_donor_<RUN_ID_BASE>*.tif
-# Lasciare "" per trovare qualsiasi TIF covariates_project_*.tif nella cartella.
-RUN_ID_BASE: str = ""   # es. "Idiofa_Lobi_2018_buf50km_excl5km_WRB2_v07_raster"
+# Leave "" to find any covariates_project_*.tif TIF in the folder.
+RUN_ID_BASE: str = ""   # e.g. "Idiofa_Lobi_2018_buf50km_excl5km_WRB2_v07_raster"
 
-# Directory dove si trovano i TIF GEE (può contenere sottocartelle).
-# Aggiungere tutti i percorsi rilevanti; il primo esistente viene usato come base output.
-BASE_DIR: str = ""  # es. "/path/to/my/data"
+# Directory where the GEE TIFs are located (may contain subfolders).
+# Add all relevant paths; the first existing one is used as the output base.
+BASE_DIR: str = ""  # e.g. "/path/to/my/data"
 
-# Shapefile opzionali per il filtro spaziale (impostare a None per disattivare).
-FNF_SHAPEFILE:      str | None = None  # es. "/path/to/FNF18_fullBuffer.shp"
-ELIGIBLE_SHAPEFILE: str | None = None  # es. "/path/to/Eligible_FNF_fullBuffer.shp"
+# Optional shapefiles for the spatial filter (set to None to disable).
+FNF_SHAPEFILE:      str | None = None  # e.g. "/path/to/FNF18_fullBuffer.shp"
+ELIGIBLE_SHAPEFILE: str | None = None  # e.g. "/path/to/Eligible_FNF_fullBuffer.shp"
 
-# Toggle eligibility sul donor. GS non richiede eleggibilità su TUTTA l'area
-# del pool donor; lo applichiamo per conservatività.
-#   True  → applica il filtro Eligible_FNF al donor (conservativo, default).
-#   False → il donor usa l'intera area non-forest (minimo GS).
+# Eligibility toggle on the donor. GS does not require eligibility over the ENTIRE
+# area of the donor pool; we apply it for conservativeness.
+#   True  → apply the Eligible_FNF filter to the donor (conservative, default).
+#   False → the donor uses the entire non-forest area (GS minimum).
 USE_ELIGIBILITY: bool = True
 
 # ══════════════════════════════════════════════════════════════════════
@@ -71,44 +71,44 @@ def main(run_step_05: bool = True,
          use_eligibility: bool = USE_ELIGIBILITY,
          outputs_dirname: str | None = None) -> dict:
     """
-    Esegue la pipeline STARR completa con l'estensione donor scelta.
+    Runs the complete STARR pipeline with the chosen donor extent.
 
-    Parametri
+    Parameters
     ---------
     run_step_05 : bool
-        Se False, si ferma dopo Step 04 (utile per 00b_compare_extents).
+        If False, stops after Step 04 (useful for 00b_compare_extents).
     donor_extent_km : float | "full"
-        Estensione donor. Default = valore CONFIG in cima al file.
+        Donor extent. Default = CONFIG value at the top of the file.
     run_id_base : str
-        Identificatore base del run (prefisso TIF GEE). Default = RUN_ID_BASE.
+        Base run identifier (GEE TIF prefix). Default = RUN_ID_BASE.
     base_dir : str
-        Directory radice dove si trovano i TIF. Default = BASE_DIR.
+        Root directory where the TIFs are located. Default = BASE_DIR.
     fnf_shapefile : str | None
-        Path shapefile FNF18. None = filtro disattivato.
+        FNF18 shapefile path. None = filter disabled.
     eligible_shapefile : str | None
-        Path shapefile Eligible_FNF. None = filtro disattivato.
+        Eligible_FNF shapefile path. None = filter disabled.
     use_eligibility : bool
-        Se True (default) applica il filtro Eligible_FNF al donor
-        (conservativo). Se False il donor usa l'intera area non-forest
-        (GS non richiede eleggibilità su tutto il pool donor).
+        If True (default) applies the Eligible_FNF filter to the donor
+        (conservative). If False the donor uses the entire non-forest area
+        (GS does not require eligibility over the whole donor pool).
 
-    Restituisce
+    Returns
     -----------
-    dict con path di output di ogni step e metadati chiave.
+    dict with the output path of each step and key metadata.
     """
     s01 = load_module("01_STARR_raster_extract.py",        "s01")
     s02 = load_module("02_STARR_matching_data_weights.py",  "s02")
     s03 = load_module("03_STARR_twin_test_selection.py",    "s03")
     s04 = load_module("04_STARR_reference_area_lock.py",    "s04")
 
-    # Propaga il nome della cartella output (editabile dal notebook / da 00b) ai
-    # moduli freschi caricati QUI. main() ricarica le proprie copie di s01..s05,
-    # quindi settare s01.OUTPUTS_DIRNAME dal notebook NON basta: va passato come
-    # parametro. Step 02/03/04 ereditano il livello da Step 01 (base_dirs[0].parent).
+    # Propagates the output folder name (editable from the notebook / from 00b) to
+    # the fresh modules loaded HERE. main() reloads its own copies of s01..s05,
+    # so setting s01.OUTPUTS_DIRNAME from the notebook is NOT enough: it must be passed as
+    # a parameter. Step 02/03/04 inherit the level from Step 01 (base_dirs[0].parent).
     if outputs_dirname is not None:
         s01.OUTPUTS_DIRNAME = outputs_dirname
 
-    # Costruisce la lista di directory base dal singolo path CONFIG
+    # Builds the list of base directories from the single CONFIG path
     _base_dirs = [base_dir] if base_dir else []
 
     # ── STEP 01 ───────────────────────────────────────────────────────
@@ -121,14 +121,14 @@ def main(run_step_05: bool = True,
         use_eligibility=use_eligibility,
     )
 
-    # Protezione RAM: Step 02 rilegge il donor da disk con sole le colonne
-    # necessarie + cap stratificato. Non serve tenerlo in RAM.
+    # RAM protection: Step 02 re-reads the donor from disk with only the
+    # necessary columns + stratified cap. No need to keep it in RAM.
     del donor_df
     gc.collect()
 
     # ── STEP 02 ───────────────────────────────────────────────────────
-    # base_dirs=[out01] → trova donor_pixels_raw.parquet nella dir
-    # isolata per questo extent. Nessuna modifica logica.
+    # base_dirs=[out01] → finds donor_pixels_raw.parquet in the dir
+    # isolated for this extent. No logic change.
     matched_df, weights, imp_df, smd_df, figs02, out02 = s02.run_matching_step(
         base_dirs=[out01], proj_df=proj_df, donor_df=None, meta=meta,
     )
@@ -147,7 +147,7 @@ def main(run_step_05: bool = True,
         twin_report=twin_report,
     )
 
-    # Metriche aggregate per il comparatore 00b
+    # Aggregate metrics for the 00b comparator
     _ext = meta.get("donor_extent_km", donor_extent_km)
     summary = {
         "donor_extent_km":       _ext,
@@ -191,17 +191,17 @@ def main(run_step_05: bool = True,
         "05_STARR_baseline_confidence_interval_UNCBSL.py", "s05")
     if outputs_dirname is not None:
         s05.OUTPUTS_DIRNAME = outputs_dirname
-    # Step 05 restituisce 6 valori: control_pixels, project_pixels, summary, report, figs, out_dir
+    # Step 05 returns 6 values: control_pixels, project_pixels, summary, report, figs, out_dir
     control_pixels, project_pixels, ci_summary, report, fig05, out05 = \
         s05.run_baseline_ci_uncbsl()
 
-    # BL_unadj,y = ΔC_ref,y × A_project  (GS STARR Eq 31a) — tCO2e assoluti, NON frazioni.
-    # Chiavi prodotte da build_unadjusted_baseline_summary (esposte dal dict summary di Step 05).
+    # BL_unadj,y = ΔC_ref,y × A_project  (GS STARR Eq 31a) — absolute tCO2e, NOT fractions.
+    # Keys produced by build_unadjusted_baseline_summary (exposed by the Step 05 summary dict).
     summary["BL_unadj_y_tCO2e"]       = ci_summary.get("BL_unadj_y_tCO2e")
     summary["BL_unadj_period_tCO2e"]  = ci_summary.get("BL_unadj_period_tCO2e")
     summary["delta_C_ref_y_tC_ha_yr"] = ci_summary.get("delta_C_ref_y_tC_ha_yr")
     summary["project_area_ha"]        = ci_summary.get("project_area_ha_used")
-    # Estremi CI (tC/ha/yr a livello di pixel — valori per unità di area per la diagnostica)
+    # CI extremes (tC/ha/yr at pixel level — per-unit-area values for diagnostics)
     summary["ci90_lower_tC_ha_yr"]    = ci_summary.get(
         "ci90_lower_final_tC_ha_yr", ci_summary.get("ci90_lower_tC_ha_yr"))
     summary["ci90_mean_tC_ha_yr"]     = ci_summary.get("mean_deltaC_control_tC_ha_yr")
