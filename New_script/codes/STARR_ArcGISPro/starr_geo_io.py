@@ -189,12 +189,14 @@ def world_to_pixel(geotransform, x, y):
 
 
 def detect_continuous_covariates(band_names):
-    """Same rule as Colab Step 01: continuous covariates = all bands except the
-    categorical / bookkeeping ones and the WRB2_CODE (→ texture)."""
+    """EXACT copy of Colab Step 01 detect_continuous_covariates: continuous
+    covariates = all bands except the flag/categorical/bookkeeping ones
+    (is_project, is_donor, lon, lat, precip bins, …), the NDVI_<year> / band_<n>
+    series, and WRB2_CODE (which becomes the texture class)."""
     import re
-    skip = {"WRB2_CODE", "tenure", "tenure_class", "precip_bin",
-            "pixel_area_ha", "ndvi_valid_years"}
-    skip_pat = re.compile(r"^(NDVI_\d{4}|ndvi_bin|precip_bin).*")
+    skip = {"is_project", "is_donor", "ndvi_valid_years", "pixel_area_ha",
+            "lon", "lat", "precip_bin", "precip_bin_100mm", "precip_bin_250mm"}
+    skip_pat = re.compile(r"^(NDVI_\d{4}|band_\d+)$")
     return [b for b in band_names
             if b not in skip and not skip_pat.match(b) and b != "WRB2_CODE"]
 
