@@ -623,17 +623,30 @@ def _write_reference_points(arcpy, df, out_dir):
         with arcpy.da.InsertCursor(tmp_shp, ["SHAPE@XY"]) as cur:
             for lon, lat in df[["ref_lon", "ref_lat"]].dropna().itertuples(index=False):
                 cur.insertRow([(float(lon), float(lat))])
+        del cur
+        try:
+            arcpy.management.ClearWorkspaceCache()   # release the schema lock
+        except Exception:
+            pass
+        # Move ONLY the real shapefile components — never arcpy's transient
+        # .lock / .sr.lock files (they are held open → Permission denied).
         moved = 0
         for f in _glob.glob(os.path.join(tmpd, "reference_points.*")):
+            base = os.path.basename(f).lower()
+            if ".lock" in base:
+                continue
             dest = os.path.join(out_dir, os.path.basename(f))   # out_dir may be \\?\...
             try:
                 if os.path.exists(dest):
                     os.remove(dest)
-            except Exception:
-                pass
-            _sh.move(f, dest)
-            moved += 1
-        arcpy.AddMessage(f"  reference_points.shp written ({moved} sidecar files)")
+                _sh.move(f, dest)
+                moved += 1
+            except Exception as _me:
+                arcpy.AddWarning(f"    (skipped sidecar {os.path.basename(f)}: {_me})")
+        if moved:
+            arcpy.AddMessage(f"  reference_points.shp written ({moved} sidecar files)")
+        else:
+            arcpy.AddWarning("  reference_points.shp not written; use reference_points.csv.")
     except Exception as e:
         arcpy.AddWarning(f"reference_points.shp not written ({e}); "
                          f"use reference_points.csv instead.")
