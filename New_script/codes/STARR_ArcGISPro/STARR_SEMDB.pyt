@@ -91,6 +91,19 @@ def _win_long(path):
     return "\\\\?\\" + p
 
 
+def _win_short(path):
+    """Strip a \\\\?\\ extended-length prefix. arcpy geoprocessing tools do NOT
+    accept extended-length paths, so anything handed to arcpy must be plain."""
+    if not path:
+        return path
+    p = str(path)
+    if p.startswith("\\\\?\\UNC\\"):
+        return "\\\\" + p[len("\\\\?\\UNC\\"):]
+    if p.startswith("\\\\?\\"):
+        return p[len("\\\\?\\"):]
+    return p
+
+
 def _open_log(out_dir, name):
     """Create <out_dir>/<name>.log and return an open file handle (or None)."""
     try:
@@ -322,7 +335,7 @@ class STARRBaselineTool(object):
             manifest = _build_reference_manifest(twin_pixels, meta, project_name, run_id_full)
             with open(os.path.join(d04, "reference_area_FINAL_manifest.json"), "w") as fh:
                 json.dump(manifest, fh, indent=2)
-            _write_reference_points_shp(arcpy, twin_pixels, os.path.join(d04, "reference_points.shp"))
+            _write_reference_points(arcpy, twin_pixels, d04)
             arcpy.AddMessage(f"  Reference pixels (unique) : "
                              f"{manifest['reference_area_definition'].get('n_unique_pixels')}")
 
@@ -577,10 +590,30 @@ def _build_reference_manifest(twin_pixels, meta, project_name, run_id):
     }
 
 
-def _write_reference_points_shp(arcpy, df, out_shp):
-    """Write the reference (control) points to a shapefile via arcpy."""
+def _write_reference_points(arcpy, df, out_dir):
+    """Write the reference (control) points. Always a CSV (reliable, no path-length
+    or arcpy limits); the shapefile is best-effort (arcpy rejects extended-length
+    \\\\?\\ paths and shapefiles have a ~260-char path limit, so it may be skipped
+    on very deep output folders — the CSV is the fallback)."""
+    if not {"ref_lon", "ref_lat"}.issubset(df.columns):
+        return
+    # 1) CSV — always works (open() accepts \\?\ paths, no length limit)
+    keep = [c for c in ("ref_lon", "ref_lat", "proj_lon", "proj_lat",
+                        "ref_texture", "proj_texture", "match_distance")
+            if c in df.columns]
+    csv_path = os.path.join(out_dir, "reference_points.csv")
     try:
-        if not {"ref_lon", "ref_lat"}.issubset(df.columns):
+        df[keep].to_csv(csv_path, index=False)
+        arcpy.AddMessage(f"  reference_points.csv written ({len(df):,} rows)")
+    except Exception as e:
+        arcpy.AddWarning(f"Could not write reference_points.csv: {e}")
+
+    # 2) Shapefile — best effort (plain path for arcpy; skip cleanly if it fails)
+    try:
+        out_shp = _win_short(os.path.join(out_dir, "reference_points.shp"))
+        if len(out_shp) > 250:
+            arcpy.AddWarning("  reference_points.shp skipped (output path > 250 chars; "
+                             "use reference_points.csv or a shorter output folder).")
             return
         sr = arcpy.SpatialReference(4326)
         if arcpy.Exists(out_shp):
@@ -591,8 +624,10 @@ def _write_reference_points_shp(arcpy, df, out_shp):
         with arcpy.da.InsertCursor(out_shp, ["SHAPE@XY"]) as cur:
             for lon, lat in df[["ref_lon", "ref_lat"]].dropna().itertuples(index=False):
                 cur.insertRow([(float(lon), float(lat))])
+        arcpy.AddMessage("  reference_points.shp written")
     except Exception as e:
-        arcpy.AddWarning(f"Could not write reference_points.shp: {e}")
+        arcpy.AddWarning(f"reference_points.shp not written ({e}); "
+                         f"use reference_points.csv instead.")
 
 
 def _apply_donor_filters(arcpy, gio, donor_df, proj_df, fnf, eligible, extent_km, messages):
