@@ -202,10 +202,15 @@ Each group is reported in **three units**, each with `n`, `mean`, `std`, `min`,
 
 ### Flat columns in `baseline_CI90_UNCBSL_summary.csv`
 For each group (`project_t0` / `project_monitoring` / `donor_t0` /
-`donor_monitoring`): `agb_<group>_n`, and `<u>_<group>_{mean,std,min,median,max}`
-for `<u>` in `agb` (biomass), `tc` (carbon), `tco2e` (CO2e); plus
-`{agb,tc,tco2e}_project_mean_change` and `{agb,tc,tco2e}_donor_mean_change`,
-and `agb_source_units`, `tC_to_tCO2e_factor`.
+`donor_monitoring`): `agb_<group>_n`, and
+`<u>_<group>_{mean,std,min,p25,median,p75,max,sum}` for `<u>` in `agb` (biomass),
+`tc` (carbon), `tco2e` (CO2e); plus `{agb,tc,tco2e}_project_mean_change` and
+`{agb,tc,tco2e}_donor_mean_change`, and `agb_source_units`, `tC_to_tCO2e_factor`.
+
+`sum` is the sum over the sampled pixels of the per-hectare value (Mg/ha, tC/ha or
+tCO2e/ha) — a diagnostic aggregate, NOT the total stock of the area (a total stock
+would be `mean × area_ha`). All eight statistics (incl. `p25`, `p75`, `sum`) are
+present for every unit both in the JSON block and in the CSV.
 
 ### Plot
 `biomass_project_vs_donor.png` — overlaid histograms of project vs donor biomass

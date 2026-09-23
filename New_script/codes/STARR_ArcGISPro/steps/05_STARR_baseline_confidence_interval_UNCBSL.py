@@ -1453,7 +1453,7 @@ def build_biomass_statistics(control_pixels, project_pixels,
         flat[f"agb_{name}_n"] = g.get("n")
         for ukey, upref in _pref.items():
             u = g.get(ukey, {})
-            for k in ("mean", "std", "min", "median", "max"):
+            for k in ("mean", "std", "min", "p25", "median", "p75", "max", "sum"):
                 flat[f"{upref}_{name}_{k}"] = u.get(k)
     for who in ("project", "donor"):
         chg = stats.get(f"{who}_mean_change_t0_to_monitoring", {})
