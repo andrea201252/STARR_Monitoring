@@ -608,26 +608,41 @@ def _write_reference_points(arcpy, df, out_dir):
     except Exception as e:
         arcpy.AddWarning(f"Could not write reference_points.csv: {e}")
 
-    # 2) Shapefile — best effort (plain path for arcpy; skip cleanly if it fails)
+    # 2) Shapefile — arcpy cannot use \\?\ paths and shapefiles have a ~260-char
+    #    limit, so write it in a SHORT temp folder, then move the sidecar files
+    #    (.shp/.shx/.dbf/.prj/.cpg) to the final (possibly very long) directory
+    #    with Python, whose open()/shutil DO handle \\?\ long paths.
+    import tempfile as _tf, shutil as _sh, glob as _glob
+    tmpd = None
     try:
-        out_shp = _win_short(os.path.join(out_dir, "reference_points.shp"))
-        if len(out_shp) > 250:
-            arcpy.AddWarning("  reference_points.shp skipped (output path > 250 chars; "
-                             "use reference_points.csv or a shorter output folder).")
-            return
         sr = arcpy.SpatialReference(4326)
-        if arcpy.Exists(out_shp):
-            arcpy.management.Delete(out_shp)
-        arcpy.management.CreateFeatureclass(
-            os.path.dirname(out_shp), os.path.basename(out_shp), "POINT",
-            spatial_reference=sr)
-        with arcpy.da.InsertCursor(out_shp, ["SHAPE@XY"]) as cur:
+        tmpd = _tf.mkdtemp(prefix="starr_refpts_")            # short path, arcpy-safe
+        tmp_shp = os.path.join(tmpd, "reference_points.shp")
+        arcpy.management.CreateFeatureclass(tmpd, "reference_points.shp",
+                                            "POINT", spatial_reference=sr)
+        with arcpy.da.InsertCursor(tmp_shp, ["SHAPE@XY"]) as cur:
             for lon, lat in df[["ref_lon", "ref_lat"]].dropna().itertuples(index=False):
                 cur.insertRow([(float(lon), float(lat))])
-        arcpy.AddMessage("  reference_points.shp written")
+        moved = 0
+        for f in _glob.glob(os.path.join(tmpd, "reference_points.*")):
+            dest = os.path.join(out_dir, os.path.basename(f))   # out_dir may be \\?\...
+            try:
+                if os.path.exists(dest):
+                    os.remove(dest)
+            except Exception:
+                pass
+            _sh.move(f, dest)
+            moved += 1
+        arcpy.AddMessage(f"  reference_points.shp written ({moved} sidecar files)")
     except Exception as e:
         arcpy.AddWarning(f"reference_points.shp not written ({e}); "
                          f"use reference_points.csv instead.")
+    finally:
+        if tmpd:
+            try:
+                _sh.rmtree(tmpd, ignore_errors=True)
+            except Exception:
+                pass
 
 
 def _apply_donor_filters(arcpy, gio, donor_df, proj_df, fnf, eligible, extent_km, messages):
