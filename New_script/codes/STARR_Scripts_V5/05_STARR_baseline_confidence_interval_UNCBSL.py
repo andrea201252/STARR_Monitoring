@@ -1368,49 +1368,132 @@ def _biomass_stats(series):
     }
 
 
+def _scale_stats(s, factor):
+    """Scale a stats dict (from _biomass_stats) by a positive linear factor."""
+    if not s or s.get("n", 0) == 0:
+        return dict(s) if s else {"n": 0}
+    out = {"n": s["n"]}
+    for k in ("mean", "std", "min", "p25", "median", "p75", "max", "sum"):
+        v = s.get(k)
+        out[k] = (float(v) * float(factor)) if v is not None else None
+    return out
+
+
 def build_biomass_statistics(control_pixels, project_pixels,
                              donor_sample_meta, project_sample_meta,
                              donor_spec, temporal_meta):
-    """Grouped AGB/stock statistics (project & donor, at T0 and the monitoring
-    year) plus a flat dict for the CSV. Uses the raw sampled stock columns
-    (proj_/ref_stock_t0_raw, proj_/ref_stock_y_raw)."""
+    """Grouped stock statistics (project & donor, at T0 and the monitoring year)
+    in THREE units — raw stock/biomass (source units), carbon (tC/ha) and CO2e
+    (tCO2e/ha) — plus a flat dict for the CSV. Carbon is taken from the already
+    sampled *_C_*_tC_ha columns (biomass x CF x (1+R)); CO2e = carbon x 44/12."""
     t0y = int(temporal_meta.get("t0_year", 0))
     myy = int(temporal_meta.get("monitoring_year", 0))
     units_raw = (donor_sample_meta.get("stock_units_raw")
                  or project_sample_meta.get("stock_units_raw")
                  or (donor_spec or {}).get("units") or "unknown")
 
+    # group -> (df, raw stock column, carbon column)
     groups = [
-        ("project_t0",         project_pixels, "proj_stock_t0_raw"),
-        ("project_monitoring", project_pixels, "proj_stock_y_raw"),
-        ("donor_t0",           control_pixels, "ref_stock_t0_raw"),
-        ("donor_monitoring",   control_pixels, "ref_stock_y_raw"),
+        ("project_t0",         project_pixels, "proj_stock_t0_raw", "proj_C_t0_tC_ha"),
+        ("project_monitoring", project_pixels, "proj_stock_y_raw",  "proj_C_y_tC_ha"),
+        ("donor_t0",           control_pixels, "ref_stock_t0_raw",  "ref_C_t0_tC_ha"),
+        ("donor_monitoring",   control_pixels, "ref_stock_y_raw",   "ref_C_y_tC_ha"),
     ]
-    stats = {"source_units": units_raw, "t0_year": t0y, "monitoring_year": myy,
-             "note": "Raw sampled stock (biomass if source_units=AGB_Mg_ha). "
-                     "Carbon = value x CF x (1+R); see units block."}
-    for name, df, col in groups:
-        stats[name] = (_biomass_stats(df[col]) if (col in df.columns) else
-                       {"n": 0, "note": f"{col} not sampled (delta-raster mode?)"})
+    stats = {
+        "source_units": units_raw, "t0_year": t0y, "monitoring_year": myy,
+        "tC_to_tCO2e_factor": float(_TC_TO_TCO2E),
+        "note": ("Per group: 'biomass' = raw sampled stock (source_units); "
+                 "'carbon_tC_ha' = biomass x CF x (1+R); 'co2e_tCO2e_ha' = carbon x 44/12."),
+    }
+    for name, df, stock_col, c_col in groups:
+        g = {"n": 0}
+        if stock_col in df.columns:
+            bstat = _biomass_stats(df[stock_col])
+            g["n"] = bstat.get("n", 0)
+            g["biomass"] = {**bstat, "units": units_raw}
+        if c_col in df.columns:
+            cstat = _biomass_stats(df[c_col])
+            g["n"] = g.get("n") or cstat.get("n", 0)
+            g["carbon_tC_ha"] = cstat
+            g["co2e_tCO2e_ha"] = _scale_stats(cstat, _TC_TO_TCO2E)
+        stats[name] = g
 
-    if {"proj_stock_t0_raw", "proj_stock_y_raw"}.issubset(project_pixels.columns):
-        stats["project_mean_change_t0_to_monitoring"] = float(
-            pd.to_numeric(project_pixels["proj_stock_y_raw"], errors="coerce").mean()
-            - pd.to_numeric(project_pixels["proj_stock_t0_raw"], errors="coerce").mean())
-    if {"ref_stock_t0_raw", "ref_stock_y_raw"}.issubset(control_pixels.columns):
-        stats["donor_mean_change_t0_to_monitoring"] = float(
-            pd.to_numeric(control_pixels["ref_stock_y_raw"], errors="coerce").mean()
-            - pd.to_numeric(control_pixels["ref_stock_t0_raw"], errors="coerce").mean())
+    # mean change T0 -> Ty in each unit
+    def _mean(df, col):
+        return (float(pd.to_numeric(df[col], errors="coerce").mean())
+                if col in df.columns else None)
+    for who, df, s0, sy, c0, cy in [
+        ("project", project_pixels, "proj_stock_t0_raw", "proj_stock_y_raw", "proj_C_t0_tC_ha", "proj_C_y_tC_ha"),
+        ("donor",   control_pixels, "ref_stock_t0_raw",  "ref_stock_y_raw",  "ref_C_t0_tC_ha",  "ref_C_y_tC_ha"),
+    ]:
+        b0, by, cc0, ccy = _mean(df, s0), _mean(df, sy), _mean(df, c0), _mean(df, cy)
+        chg = {}
+        if b0 is not None and by is not None:
+            chg["biomass"] = by - b0
+        if cc0 is not None and ccy is not None:
+            chg["carbon_tC_ha"] = ccy - cc0
+            chg["co2e_tCO2e_ha"] = (ccy - cc0) * float(_TC_TO_TCO2E)
+        stats[f"{who}_mean_change_t0_to_monitoring"] = chg
 
     # flat keys for the one-row CSV summary
-    flat = {"agb_source_units": units_raw}
-    for name, _, _ in groups:
-        s = stats[name]
-        for k in ("n", "mean", "std", "min", "median", "max"):
-            flat[f"agb_{name}_{k}"] = s.get(k)
-    flat["agb_project_mean_change"] = stats.get("project_mean_change_t0_to_monitoring")
-    flat["agb_donor_mean_change"] = stats.get("donor_mean_change_t0_to_monitoring")
+    flat = {"agb_source_units": units_raw, "tC_to_tCO2e_factor": float(_TC_TO_TCO2E)}
+    _pref = {"biomass": "agb", "carbon_tC_ha": "tc", "co2e_tCO2e_ha": "tco2e"}
+    for name, _, _, _ in groups:
+        g = stats[name]
+        flat[f"agb_{name}_n"] = g.get("n")
+        for ukey, upref in _pref.items():
+            u = g.get(ukey, {})
+            for k in ("mean", "std", "min", "median", "max"):
+                flat[f"{upref}_{name}_{k}"] = u.get(k)
+    for who in ("project", "donor"):
+        chg = stats.get(f"{who}_mean_change_t0_to_monitoring", {})
+        flat[f"agb_{who}_mean_change"]   = chg.get("biomass")
+        flat[f"tc_{who}_mean_change"]    = chg.get("carbon_tC_ha")
+        flat[f"tco2e_{who}_mean_change"] = chg.get("co2e_tCO2e_ha")
     return stats, flat
+
+
+def plot_biomass_distributions(control_pixels, project_pixels, out_dir,
+                               units_label="AGB", filename="biomass_project_vs_donor.png"):
+    """Overlaid histograms of project vs donor raw stock (biomass) at T0 and the
+    monitoring year. Robust to (near-)constant data."""
+    def _col(df, c):
+        return (pd.to_numeric(df[c], errors="coerce").dropna().astype(float).to_numpy()
+                if c in df.columns else np.array([]))
+
+    def _bins(a, b):
+        allv = np.concatenate([a, b]) if (a.size or b.size) else np.array([0.0, 1.0])
+        lo, hi = float(np.min(allv)), float(np.max(allv))
+        if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
+            return np.linspace(lo - 0.5, lo + 0.5, 5)
+        nb = int(min(60, max(10, np.sqrt(max(a.size, b.size, 1)))))
+        return np.linspace(lo, hi, nb + 1)
+
+    epochs = [("T0", "proj_stock_t0_raw", "ref_stock_t0_raw"),
+              ("monitoring year", "proj_stock_y_raw", "ref_stock_y_raw")]
+    fig, axes = plt.subplots(1, 2, figsize=(13, 5), sharey=False)
+    for ax, (ep, pcol, dcol) in zip(np.atleast_1d(axes), epochs):
+        pv = _col(project_pixels, pcol)
+        dv = _col(control_pixels, dcol)
+        bins = _bins(pv, dv)
+        if dv.size:
+            ax.hist(dv, bins=bins, alpha=0.55, label=f"Donor (n={dv.size:,})", edgecolor="none")
+            ax.axvline(dv.mean(), linestyle="--", linewidth=1.4,
+                       label=f"Donor mean {dv.mean():,.1f}")
+        if pv.size:
+            ax.hist(pv, bins=bins, alpha=0.55, label=f"Project (n={pv.size:,})", edgecolor="none")
+            ax.axvline(pv.mean(), linestyle=":", linewidth=1.6,
+                       label=f"Project mean {pv.mean():,.1f}")
+        ax.set_title(f"{units_label} at {ep}")
+        ax.set_xlabel(units_label)
+        ax.set_ylabel("Pixel count")
+        ax.grid(alpha=0.3)
+        ax.legend(fontsize=8)
+    fig.suptitle("Biomass distribution — Project vs Donor", fontsize=12)
+    plt.tight_layout()
+    out_path = Path(out_dir) / filename
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    return fig, out_path
 
 
 # ================================================================
@@ -1634,6 +1717,14 @@ def run_baseline_ci_uncbsl_from_rasters(
     fig2, fig2_path = plot_project_vs_control(control_valid, project_valid, out_dir)
     figs["control_ci"] = fig1
     figs["project_vs_control"] = fig2
+    try:
+        fig3, fig3_path = plot_biomass_distributions(
+            control_pixels, project_pixels, out_dir,
+            units_label=str(biomass_statistics.get("source_units", "AGB")))
+        figs["biomass_distribution"] = fig3
+    except Exception as _e:
+        fig3_path = None
+        print(f"    [warn] biomass distribution plot skipped: {_e}")
 
     report = {
         "run_id": _run_id,
@@ -1691,6 +1782,7 @@ def run_baseline_ci_uncbsl_from_rasters(
             "report_json": str(out_dir / "baseline_CI90_UNCBSL_report.json"),
             "fig_control_ci": str(fig1_path),
             "fig_project_vs_control": str(fig2_path),
+            "fig_biomass_distribution": (str(fig3_path) if fig3_path else None),
         },
     }
 
@@ -1708,21 +1800,27 @@ def run_baseline_ci_uncbsl_from_rasters(
         print(f"Unique PA px represented       : {summary['n_project_unique_pixels_represented']:,}")
         print(f"Project area used              : {summary['project_area_ha']:,.4f} ha")
         print(f"{'─' * 72}")
-        # ── Biomass (AGB) statistics (project & donor, T0 and monitoring year) ──
+        # ── Biomass / carbon statistics (project & donor, T0 and monitoring year) ──
         _u = biomass_statistics.get("source_units", "")
-        print(f"AGB / stock statistics [{_u}] — mean ± std (n):")
+        print(f"Stock statistics — mean (n)  [biomass {_u} | carbon tC/ha | CO2e tCO2e/ha]:")
         for _lbl, _key in [("Project  T0", "project_t0"),
                            ("Project  Ty", "project_monitoring"),
                            ("Donor    T0", "donor_t0"),
                            ("Donor    Ty", "donor_monitoring")]:
             _g = biomass_statistics.get(_key, {})
             if _g.get("n"):
-                print(f"    {_lbl:12s}: {_g['mean']:,.3f} ± {_g['std']:,.3f}  "
-                      f"(n={_g['n']:,}, min {_g['min']:,.2f} / med {_g['median']:,.2f} / max {_g['max']:,.2f})")
-        _pc = biomass_statistics.get("project_mean_change_t0_to_monitoring")
-        _dc = biomass_statistics.get("donor_mean_change_t0_to_monitoring")
-        if _pc is not None:
-            print(f"    mean ΔAGB T0→Ty : project {_pc:+,.3f} | donor {_dc:+,.3f} [{_u} over period]")
+                _b = _g.get("biomass", {}); _c = _g.get("carbon_tC_ha", {}); _o = _g.get("co2e_tCO2e_ha", {})
+                print(f"    {_lbl:12s}: {_b.get('mean', float('nan')):>10,.2f} | "
+                      f"{_c.get('mean', float('nan')):>9,.2f} | "
+                      f"{_o.get('mean', float('nan')):>10,.2f}   (n={_g['n']:,})")
+        _pc = biomass_statistics.get("project_mean_change_t0_to_monitoring", {})
+        _dc = biomass_statistics.get("donor_mean_change_t0_to_monitoring", {})
+        if _pc.get("biomass") is not None:
+            print(f"    mean Δ T0→Ty  project: {_pc.get('biomass'):+,.2f} {_u} | "
+                  f"{_pc.get('carbon_tC_ha'):+,.2f} tC/ha | {_pc.get('co2e_tCO2e_ha'):+,.2f} tCO2e/ha")
+        if _dc.get("biomass") is not None:
+            print(f"    mean Δ T0→Ty  donor  : {_dc.get('biomass'):+,.2f} {_u} | "
+                  f"{_dc.get('carbon_tC_ha'):+,.2f} tC/ha | {_dc.get('co2e_tCO2e_ha'):+,.2f} tCO2e/ha")
         print(f"{'─' * 72}")
         # ── Primary output: BL_unadj,y = ΔC_ref,y × A_project (GS STARR Eq 31a) ──
         # These are the numbers a PM needs — absolute tC and tCO2e, NOT fractions.

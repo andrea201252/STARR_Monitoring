@@ -357,12 +357,16 @@ class STARRBaselineTool(object):
                         arcpy.AddMessage(f"    {kk}: {summ[kk]}")
                 _bs = report.get("biomass_statistics", {}) if isinstance(report, dict) else {}
                 if _bs:
-                    arcpy.AddMessage(f"  --- AGB / stock [{_bs.get('source_units','')}] mean (n) ---")
+                    _u = _bs.get('source_units', '')
+                    arcpy.AddMessage(f"  --- stock mean [biomass {_u} | tC/ha | tCO2e/ha] (n) ---")
                     for _lab, _k in [("project T0", "project_t0"), ("project Ty", "project_monitoring"),
                                      ("donor   T0", "donor_t0"), ("donor   Ty", "donor_monitoring")]:
                         _g = _bs.get(_k, {})
                         if _g.get("n"):
-                            arcpy.AddMessage(f"    {_lab}: {_g['mean']:.2f} (n={_g['n']:,})")
+                            _b = _g.get("biomass", {}).get("mean")
+                            _c = _g.get("carbon_tC_ha", {}).get("mean")
+                            _o = _g.get("co2e_tCO2e_ha", {}).get("mean")
+                            arcpy.AddMessage(f"    {_lab}: {_b:.2f} | {_c:.2f} | {_o:.2f} (n={_g['n']:,})")
 
             arcpy.AddMessage("\nDONE. Outputs in: " + out_dir)
         except Exception as e:
@@ -506,12 +510,16 @@ class STARRStep05Tool(object):
                     arcpy.AddMessage(f"    {kk}: {summ[kk]}")
             _bs = report.get("biomass_statistics", {}) if isinstance(report, dict) else {}
             if _bs:
-                arcpy.AddMessage(f"  --- AGB / stock [{_bs.get('source_units','')}] mean (n) ---")
+                _u = _bs.get('source_units', '')
+                arcpy.AddMessage(f"  --- stock mean [biomass {_u} | tC/ha | tCO2e/ha] (n) ---")
                 for _lab, _k in [("project T0", "project_t0"), ("project Ty", "project_monitoring"),
                                  ("donor   T0", "donor_t0"), ("donor   Ty", "donor_monitoring")]:
                     _g = _bs.get(_k, {})
                     if _g.get("n"):
-                        arcpy.AddMessage(f"    {_lab}: {_g['mean']:.2f} (n={_g['n']:,})")
+                        _b = _g.get("biomass", {}).get("mean")
+                        _c = _g.get("carbon_tC_ha", {}).get("mean")
+                        _o = _g.get("co2e_tCO2e_ha", {}).get("mean")
+                        arcpy.AddMessage(f"    {_lab}: {_b:.2f} | {_c:.2f} | {_o:.2f} (n={_g['n']:,})")
             arcpy.AddMessage("\nDONE. Outputs in: " + d05)
         except Exception as e:
             try: sys.stdout.flush()

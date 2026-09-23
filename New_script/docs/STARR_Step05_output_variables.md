@@ -188,14 +188,29 @@ In the JSON report under the top-level key `biomass_statistics`:
 | `project_mean_change_t0_to_monitoring` | Mean PA biomass change T0→Ty (same units). |
 | `donor_mean_change_t0_to_monitoring` | Mean donor biomass change T0→Ty. |
 
-Each group holds: `n`, `mean`, `std`, `min`, `p25`, `median`, `p75`, `max`, `sum`.
+Each group is reported in **three units**, each with `n`, `mean`, `std`, `min`,
+`p25`, `median`, `p75`, `max`, `sum`:
+
+| Sub-key | Unit | From |
+|---|---|---|
+| `biomass` | source units (e.g. `AGB_Mg_ha`) | raw sampled stock |
+| `carbon_tC_ha` | tC/ha | biomass × CF × (1+R) |
+| `co2e_tCO2e_ha` | tCO2e/ha | carbon × 44/12 |
+
+`*_mean_change_t0_to_monitoring` carries the T0→Ty mean change in all three units
+(`biomass`, `carbon_tC_ha`, `co2e_tCO2e_ha`). `tC_to_tCO2e_factor` = 44/12.
 
 ### Flat columns in `baseline_CI90_UNCBSL_summary.csv`
-`agb_source_units`, and for each of `project_t0` / `project_monitoring` /
-`donor_t0` / `donor_monitoring`:
-`agb_<group>_n`, `agb_<group>_mean`, `agb_<group>_std`, `agb_<group>_min`,
-`agb_<group>_median`, `agb_<group>_max`; plus `agb_project_mean_change` and
-`agb_donor_mean_change`.
+For each group (`project_t0` / `project_monitoring` / `donor_t0` /
+`donor_monitoring`): `agb_<group>_n`, and `<u>_<group>_{mean,std,min,median,max}`
+for `<u>` in `agb` (biomass), `tc` (carbon), `tco2e` (CO2e); plus
+`{agb,tc,tco2e}_project_mean_change` and `{agb,tc,tco2e}_donor_mean_change`,
+and `agb_source_units`, `tC_to_tCO2e_factor`.
+
+### Plot
+`biomass_project_vs_donor.png` — overlaid histograms of project vs donor biomass
+at T0 and the monitoring year (referenced in the report under
+`outputs.fig_biomass_distribution`).
 
 ### Per-pixel biomass
 The raw per-pixel biomass at both epochs is in the distribution files:
