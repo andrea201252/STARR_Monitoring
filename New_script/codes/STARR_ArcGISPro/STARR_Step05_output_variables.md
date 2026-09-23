@@ -167,3 +167,38 @@ One row per **(AGB source × period)**. Curated subset of the summary:
 | `project_area_ha` | ha | PA area used. |
 | `baseline_status` | – | Baseline-adjustment status. |
 | `allow_negative_baseline` | bool | Whether negative baselines were kept. |
+
+---
+
+## 10. Biomass (AGB) statistics — `biomass_statistics` block  *(new)*
+
+Descriptive statistics of the **raw sampled stock** (biomass when
+`source_units = AGB_Mg_ha`) for the **project (PA)** and the **donor/reference**
+pixels, at **T0** and at the **monitoring year (Ty)**. Carbon is then
+`value × CF × (1 + R)`; these are the pre-conversion biomass values.
+
+In the JSON report under the top-level key `biomass_statistics`:
+
+| Field | Meaning |
+|---|---|
+| `source_units` | Raster units of the sampled stock (e.g. `AGB_Mg_ha`). |
+| `t0_year`, `monitoring_year` | The two epochs. |
+| `project_t0`, `project_monitoring` | Stats of PA biomass at T0 and Ty. |
+| `donor_t0`, `donor_monitoring` | Stats of donor/reference biomass at T0 and Ty. |
+| `project_mean_change_t0_to_monitoring` | Mean PA biomass change T0→Ty (same units). |
+| `donor_mean_change_t0_to_monitoring` | Mean donor biomass change T0→Ty. |
+
+Each group holds: `n`, `mean`, `std`, `min`, `p25`, `median`, `p75`, `max`, `sum`.
+
+### Flat columns in `baseline_CI90_UNCBSL_summary.csv`
+`agb_source_units`, and for each of `project_t0` / `project_monitoring` /
+`donor_t0` / `donor_monitoring`:
+`agb_<group>_n`, `agb_<group>_mean`, `agb_<group>_std`, `agb_<group>_min`,
+`agb_<group>_median`, `agb_<group>_max`; plus `agb_project_mean_change` and
+`agb_donor_mean_change`.
+
+### Per-pixel biomass
+The raw per-pixel biomass at both epochs is in the distribution files:
+`*_control_deltaC_distribution.*` has `ref_stock_t0_raw`, `ref_stock_y_raw`;
+`*_project_deltaC_distribution.*` has `proj_stock_t0_raw`, `proj_stock_y_raw`
+(plus the derived `*_C_t0_tC_ha`, `*_C_y_tC_ha`, `*_deltaC_tC_ha_yr`).

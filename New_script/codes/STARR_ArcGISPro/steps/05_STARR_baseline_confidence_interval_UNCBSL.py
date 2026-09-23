@@ -1355,6 +1355,75 @@ def plot_project_vs_control(control_df, project_df, out_dir):
 
 
 # ================================================================
+# BIOMASS (AGB) STATISTICS
+# ================================================================
+
+def _biomass_stats(series):
+    """Descriptive statistics of a raw sampled stock/biomass column (NaN ignored)."""
+    v = pd.to_numeric(series, errors="coerce").to_numpy(dtype=float)
+    v = v[np.isfinite(v)]
+    if v.size == 0:
+        return {"n": 0, "mean": None, "std": None, "min": None,
+                "p25": None, "median": None, "p75": None, "max": None, "sum": None}
+    return {
+        "n":      int(v.size),
+        "mean":   float(np.mean(v)),
+        "std":    float(np.std(v, ddof=1)) if v.size > 1 else 0.0,
+        "min":    float(np.min(v)),
+        "p25":    float(np.percentile(v, 25)),
+        "median": float(np.median(v)),
+        "p75":    float(np.percentile(v, 75)),
+        "max":    float(np.max(v)),
+        "sum":    float(np.sum(v)),
+    }
+
+
+def build_biomass_statistics(control_pixels, project_pixels,
+                             donor_sample_meta, project_sample_meta,
+                             donor_spec, temporal_meta):
+    """Grouped AGB/stock statistics (project & donor, at T0 and the monitoring
+    year) plus a flat dict for the CSV. Uses the raw sampled stock columns
+    (proj_/ref_stock_t0_raw, proj_/ref_stock_y_raw)."""
+    t0y = int(temporal_meta.get("t0_year", 0))
+    myy = int(temporal_meta.get("monitoring_year", 0))
+    units_raw = (donor_sample_meta.get("stock_units_raw")
+                 or project_sample_meta.get("stock_units_raw")
+                 or (donor_spec or {}).get("units") or "unknown")
+
+    groups = [
+        ("project_t0",         project_pixels, "proj_stock_t0_raw"),
+        ("project_monitoring", project_pixels, "proj_stock_y_raw"),
+        ("donor_t0",           control_pixels, "ref_stock_t0_raw"),
+        ("donor_monitoring",   control_pixels, "ref_stock_y_raw"),
+    ]
+    stats = {"source_units": units_raw, "t0_year": t0y, "monitoring_year": myy,
+             "note": "Raw sampled stock (biomass if source_units=AGB_Mg_ha). "
+                     "Carbon = value x CF x (1+R); see units block."}
+    for name, df, col in groups:
+        stats[name] = (_biomass_stats(df[col]) if (col in df.columns) else
+                       {"n": 0, "note": f"{col} not sampled (delta-raster mode?)"})
+
+    if {"proj_stock_t0_raw", "proj_stock_y_raw"}.issubset(project_pixels.columns):
+        stats["project_mean_change_t0_to_monitoring"] = float(
+            pd.to_numeric(project_pixels["proj_stock_y_raw"], errors="coerce").mean()
+            - pd.to_numeric(project_pixels["proj_stock_t0_raw"], errors="coerce").mean())
+    if {"ref_stock_t0_raw", "ref_stock_y_raw"}.issubset(control_pixels.columns):
+        stats["donor_mean_change_t0_to_monitoring"] = float(
+            pd.to_numeric(control_pixels["ref_stock_y_raw"], errors="coerce").mean()
+            - pd.to_numeric(control_pixels["ref_stock_t0_raw"], errors="coerce").mean())
+
+    # flat keys for the one-row CSV summary
+    flat = {"agb_source_units": units_raw}
+    for name, _, _ in groups:
+        s = stats[name]
+        for k in ("n", "mean", "std", "min", "median", "max"):
+            flat[f"agb_{name}_{k}"] = s.get(k)
+    flat["agb_project_mean_change"] = stats.get("project_mean_change_t0_to_monitoring")
+    flat["agb_donor_mean_change"] = stats.get("donor_mean_change_t0_to_monitoring")
+    return stats, flat
+
+
+# ================================================================
 # MAIN STEP
 # ================================================================
 
@@ -1523,6 +1592,11 @@ def run_baseline_ci_uncbsl_from_rasters(
     )
     project_valid, project_summary = calculate_project_summary(project_pixels, full_project_area_ha)
 
+    # 4b. Biomass (AGB) statistics — project & donor, at T0 and the monitoring year.
+    biomass_statistics, biomass_flat = build_biomass_statistics(
+        control_pixels, project_pixels, donor_sample_meta, project_sample_meta,
+        donor_spec, temporal_meta)
+
     # 5. Unadjusted baseline total.
     baseline_summary = build_unadjusted_baseline_summary(
         control_summary,
@@ -1553,6 +1627,7 @@ def run_baseline_ci_uncbsl_from_rasters(
         **control_summary,
         **project_summary,
         **baseline_summary,
+        **biomass_flat,
         "coordinate_key_round_decimals": int(COORD_ROUND_DECIMALS),
         "area_metadata": area_meta,
     }
@@ -1600,6 +1675,7 @@ def run_baseline_ci_uncbsl_from_rasters(
             "donor_reference": donor_sample_meta,
             "project_pa": project_sample_meta,
         },
+        "biomass_statistics": biomass_statistics,
         "summary": summary,
         "compliance_notes": [
             "N_control is based on all locked matched control rows subjected to the parallel test; duplicate reference pixels are not removed.",
@@ -1641,6 +1717,22 @@ def run_baseline_ci_uncbsl_from_rasters(
         print(f"Valid matched PA rows          : {summary['n_project_matched_valid_rows']:,}")
         print(f"Unique PA px represented       : {summary['n_project_unique_pixels_represented']:,}")
         print(f"Project area used              : {summary['project_area_ha']:,.4f} ha")
+        print(f"{'─' * 72}")
+        # ── Biomass (AGB) statistics (project & donor, T0 and monitoring year) ──
+        _u = biomass_statistics.get("source_units", "")
+        print(f"AGB / stock statistics [{_u}] — mean ± std (n):")
+        for _lbl, _key in [("Project  T0", "project_t0"),
+                           ("Project  Ty", "project_monitoring"),
+                           ("Donor    T0", "donor_t0"),
+                           ("Donor    Ty", "donor_monitoring")]:
+            _g = biomass_statistics.get(_key, {})
+            if _g.get("n"):
+                print(f"    {_lbl:12s}: {_g['mean']:,.3f} ± {_g['std']:,.3f}  "
+                      f"(n={_g['n']:,}, min {_g['min']:,.2f} / med {_g['median']:,.2f} / max {_g['max']:,.2f})")
+        _pc = biomass_statistics.get("project_mean_change_t0_to_monitoring")
+        _dc = biomass_statistics.get("donor_mean_change_t0_to_monitoring")
+        if _pc is not None:
+            print(f"    mean ΔAGB T0→Ty : project {_pc:+,.3f} | donor {_dc:+,.3f} [{_u} over period]")
         print(f"{'─' * 72}")
         # ── Primary output: BL_unadj,y = ΔC_ref,y × A_project (GS STARR Eq 31a) ──
         # These are the numbers a PM needs — absolute tC and tCO2e, NOT fractions.

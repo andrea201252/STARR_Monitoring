@@ -337,7 +337,7 @@ class STARRBaselineTool(object):
                 donor_spec = _agb_spec(sval("agb_control_t0"), sval("agb_control_y"), raster_units)
                 project_spec = _agb_spec(sval("agb_project_t0"), sval("agb_project_y"), raster_units)
                 d05 = os.path.join(out_dir, "05_baseline_CI_UNCBSL")
-                report = s05.run_baseline_ci_uncbsl_from_rasters(
+                _cv, _pv, summ, report, _figs, _od = s05.run_baseline_ci_uncbsl_from_rasters(
                     base_dirs=[out_dir], output_dir=d05,
                     donor_raster_spec=donor_spec, project_raster_spec=project_spec,
                     twin_df=twin_pixels, project_df=None,
@@ -349,12 +349,20 @@ class STARRBaselineTool(object):
                     use_conservative_block_ci=bool(val("use_block_ci")),
                     spatial_block_size_m=float(val("block_size_m") or 500.0),
                     project_name=project_name, run_id=run_id_full, verbose=True)
-                summ = report.get("summary", report) if isinstance(report, dict) else {}
+                summ = summ if isinstance(summ, dict) else {}
                 arcpy.AddMessage("  --- Unadjusted baseline ---")
                 for kk in ("delta_C_ref_y_tC_ha_yr", "BL_unadj_period_tCO2e",
                            "mean_deltaC_project_weighted_tC_ha_yr", "uncbsl_percent"):
                     if kk in summ:
                         arcpy.AddMessage(f"    {kk}: {summ[kk]}")
+                _bs = report.get("biomass_statistics", {}) if isinstance(report, dict) else {}
+                if _bs:
+                    arcpy.AddMessage(f"  --- AGB / stock [{_bs.get('source_units','')}] mean (n) ---")
+                    for _lab, _k in [("project T0", "project_t0"), ("project Ty", "project_monitoring"),
+                                     ("donor   T0", "donor_t0"), ("donor   Ty", "donor_monitoring")]:
+                        _g = _bs.get(_k, {})
+                        if _g.get("n"):
+                            arcpy.AddMessage(f"    {_lab}: {_g['mean']:.2f} (n={_g['n']:,})")
 
             arcpy.AddMessage("\nDONE. Outputs in: " + out_dir)
         except Exception as e:
@@ -479,7 +487,7 @@ class STARRStep05Tool(object):
             donor_spec = _agb_spec(sval("agb_control_t0"), sval("agb_control_y"), raster_units)
             project_spec = _agb_spec(sval("agb_project_t0"), sval("agb_project_y"), raster_units)
             d05 = os.path.join(run_folder, "05_baseline_CI_UNCBSL")
-            report = s05.run_baseline_ci_uncbsl_from_rasters(
+            _cv, _pv, summ, report, _figs, _od = s05.run_baseline_ci_uncbsl_from_rasters(
                 base_dirs=[run_folder], output_dir=d05,
                 donor_raster_spec=donor_spec, project_raster_spec=project_spec,
                 twin_df=None, project_df=None,          # reloaded from 03_twin_test
@@ -491,11 +499,19 @@ class STARRStep05Tool(object):
                 use_conservative_block_ci=bool(val("use_block_ci")),
                 spatial_block_size_m=float(val("block_size_m") or 500.0),
                 project_name=project_name, run_id=run_id, verbose=True)
-            summ = report.get("summary", report) if isinstance(report, dict) else {}
+            summ = summ if isinstance(summ, dict) else {}
             for kk in ("delta_C_ref_y_tC_ha_yr", "BL_unadj_period_tCO2e",
                        "mean_deltaC_project_weighted_tC_ha_yr", "uncbsl_percent"):
                 if kk in summ:
                     arcpy.AddMessage(f"    {kk}: {summ[kk]}")
+            _bs = report.get("biomass_statistics", {}) if isinstance(report, dict) else {}
+            if _bs:
+                arcpy.AddMessage(f"  --- AGB / stock [{_bs.get('source_units','')}] mean (n) ---")
+                for _lab, _k in [("project T0", "project_t0"), ("project Ty", "project_monitoring"),
+                                 ("donor   T0", "donor_t0"), ("donor   Ty", "donor_monitoring")]:
+                    _g = _bs.get(_k, {})
+                    if _g.get("n"):
+                        arcpy.AddMessage(f"    {_lab}: {_g['mean']:.2f} (n={_g['n']:,})")
             arcpy.AddMessage("\nDONE. Outputs in: " + d05)
         except Exception as e:
             try: sys.stdout.flush()
