@@ -271,8 +271,16 @@ class STARRBaselineTool(object):
 
             # ── STEP 01 — covariate extraction (GDAL) ─────────────────────────
             arcpy.AddMessage("\n[STEP 01] Reading covariate rasters (GDAL)...")
-            proj_df, _, meta = gio.read_covariate_raster_to_df(project_raster, tile_name="project")
-            donor_df, _, _ = gio.read_covariate_raster_to_df(donor_raster, tile_name="donor")
+            # Fallback CRS (used only if a covariate raster has no embedded CRS):
+            # take it from the FNF shapefile (or the eligible one), as requested.
+            _fallback_wkt = (gio.vector_srs_wkt(sval("fnf_shapefile"))
+                             or gio.vector_srs_wkt(sval("eligible_shapefile")))
+            if _fallback_wkt:
+                arcpy.AddMessage("  (fallback CRS from FNF/eligible shapefile is available)")
+            proj_df, _, meta = gio.read_covariate_raster_to_df(
+                project_raster, tile_name="project", fallback_srs_wkt=_fallback_wkt)
+            donor_df, _, _ = gio.read_covariate_raster_to_df(
+                donor_raster, tile_name="donor", fallback_srs_wkt=_fallback_wkt)
             if proj_df.empty or donor_df.empty:
                 raise RuntimeError("Empty project or donor extraction — check the rasters/band names.")
             meta["run_id"] = run_id_full

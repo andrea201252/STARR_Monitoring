@@ -42,6 +42,67 @@ except Exception:
     _HAS_PYPROJ = False
 
 
+# ── Reprojection via GDAL/osr (preferred — always present with GDAL; some
+#    ArcGIS installs do NOT expose an importable pyproj, so osr is the robust
+#    path and pyproj is only a fallback). ──────────────────────────────────────
+def _osr_srs(spec):
+    """osr.SpatialReference from an EPSG int or a WKT string, forced to
+    traditional GIS axis order (x=lon, y=lat) to match pyproj always_xy=True."""
+    s = osr.SpatialReference()
+    if isinstance(spec, int):
+        s.ImportFromEPSG(int(spec))
+    else:
+        s.ImportFromWkt(str(spec))
+    try:
+        s.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+    except Exception:
+        pass
+    return s
+
+
+def _osr_ct(src_spec, dst_spec):
+    """Build a GDAL CoordinateTransformation (src/dst = EPSG int or WKT str)."""
+    if not _HAS_GDAL:
+        raise RuntimeError("GDAL/osr not available for reprojection.")
+    return osr.CoordinateTransformation(_osr_srs(src_spec), _osr_srs(dst_spec))
+
+
+def _ct_apply(ct, x, y, chunk=500_000):
+    """Apply a prebuilt osr transform to x/y arrays → (x2, y2) float arrays.
+    Chunked so a multi-million-pixel donor raster does not spike memory."""
+    x = np.asarray(x, float).ravel()
+    y = np.asarray(y, float).ravel()
+    n = x.size
+    if n == 0:
+        return x, y
+    ox = np.empty(n, dtype=float)
+    oy = np.empty(n, dtype=float)
+    for i in range(0, n, chunk):
+        j = min(i + chunk, n)
+        res = np.asarray(ct.TransformPoints(list(zip(x[i:j].tolist(), y[i:j].tolist()))),
+                         dtype=float)
+        ox[i:j] = res[:, 0]
+        oy[i:j] = res[:, 1]
+    return ox, oy
+
+
+def _reproject_xy(src_spec, dst_spec, x, y):
+    """One-shot reprojection with osr, pyproj fallback."""
+    if _HAS_GDAL:
+        try:
+            return _ct_apply(_osr_ct(src_spec, dst_spec), x, y)
+        except Exception:
+            pass
+    if _HAS_PYPROJ:
+        def _s(v):
+            return f"EPSG:{v}" if isinstance(v, int) else v
+        tr = Transformer.from_crs(_s(src_spec), _s(dst_spec), always_xy=True)
+        xx, yy = tr.transform(np.asarray(x, float), np.asarray(y, float))
+        return np.asarray(xx, float), np.asarray(yy, float)
+    raise RuntimeError("Neither GDAL/osr nor pyproj can reproject coordinates. "
+                       "The ArcGIS Pro Python normally provides both.")
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # PURE CORE  (no GDAL — unit-testable)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -193,26 +254,61 @@ def read_raster_stack(path):
 
 def make_lonlat_projector(srs_wkt, is_geographic):
     """Return callable(x, y) -> (lon, lat). Identity when the raster is already
-    geographic (EPSG:4326); otherwise a pyproj Transformer to EPSG:4326."""
+    geographic; otherwise reproject the raster CRS to EPSG:4326 with GDAL/osr
+    (preferred, built once) and pyproj as a fallback."""
     if is_geographic or not srs_wkt:
         return lambda x, y: (np.asarray(x, float), np.asarray(y, float))
-    if not _HAS_PYPROJ:
-        raise RuntimeError("pyproj not importable (needed to reproject a "
-                           "projected raster to lon/lat).")
-    tr = Transformer.from_crs(srs_wkt, "EPSG:4326", always_xy=True)
-    def _proj(x, y):
-        lon, lat = tr.transform(np.asarray(x, float), np.asarray(y, float))
-        return np.asarray(lon, float), np.asarray(lat, float)
-    return _proj
+    if _HAS_GDAL:
+        try:
+            ct = _osr_ct(srs_wkt, 4326)               # raster CRS -> lon/lat
+            return lambda x, y: _ct_apply(ct, x, y)
+        except Exception:
+            pass
+    if _HAS_PYPROJ:
+        tr = Transformer.from_crs(srs_wkt, "EPSG:4326", always_xy=True)
+        def _proj(x, y):
+            lon, lat = tr.transform(np.asarray(x, float), np.asarray(y, float))
+            return np.asarray(lon, float), np.asarray(lat, float)
+        return _proj
+    raise RuntimeError("Neither GDAL/osr nor pyproj can reproject the raster to "
+                       "lon/lat. The ArcGIS Pro Python normally provides both; "
+                       "check the raster CRS.")
 
 
-def read_covariate_raster_to_df(path, tile_name=None):
+def vector_srs_wkt(path):
+    """CRS (WKT) of a vector dataset (e.g. the FNF shapefile), via OGR. None if
+    unavailable. Used as a fallback CRS when a covariate raster has no embedded
+    CRS."""
+    if not _HAS_GDAL or not path:
+        return None
+    try:
+        ds = ogr.Open(str(path))
+        lyr = ds.GetLayer(0)
+        sr = lyr.GetSpatialRef()
+        wkt = sr.ExportToWkt() if sr is not None else None
+        ds = None
+        return wkt or None
+    except Exception:
+        return None
+
+
+def read_covariate_raster_to_df(path, tile_name=None, fallback_srs_wkt=None):
     """
     High-level: GeoTIFF covariate stack → (df, band_names, meta) with the exact
     schema Step 02 expects. `meta` carries band_names, continuous_covariates,
     ndvi_year_cols, crs, pixel_size.
+
+    fallback_srs_wkt : if the raster has NO embedded CRS, assume this one
+    (e.g. the FNF shapefile's CRS) so the pixels can still be georeferenced.
     """
     stack, names, gt, srs_wkt, is_geo, px = read_raster_stack(path)
+    if (not srs_wkt) and fallback_srs_wkt:
+        srs_wkt = fallback_srs_wkt
+        try:
+            _sr = osr.SpatialReference(); _sr.ImportFromWkt(srs_wkt)
+            is_geo = bool(_sr.IsGeographic())
+        except Exception:
+            is_geo = False
     projector = make_lonlat_projector(srs_wkt, is_geo)
     import os
     tile = tile_name if tile_name is not None else os.path.basename(path)
@@ -248,11 +344,7 @@ def sample_raster_at_lonlat(path, lon, lat, band=1, project_from_lonlat=True):
     if project_from_lonlat and srs_wkt:
         sr = osr.SpatialReference(); sr.ImportFromWkt(srs_wkt)
         if not sr.IsGeographic():
-            if not _HAS_PYPROJ:
-                raise RuntimeError("pyproj needed to project sample points.")
-            tr = Transformer.from_crs("EPSG:4326", srs_wkt, always_xy=True)
-            x, y = tr.transform(x, y)
-            x = np.asarray(x, float); y = np.asarray(y, float)
+            x, y = _reproject_xy(4326, srs_wkt, x, y)   # lon/lat -> raster CRS (osr, pyproj fallback)
 
     col, row = world_to_pixel(gt, x, y)
     out = np.full(len(np.atleast_1d(col)), np.nan, dtype=np.float64)
@@ -345,10 +437,7 @@ def sample_raster_values(points_df, lon_col, lat_col, raster_path,
         sr = osr.SpatialReference(); sr.ImportFromWkt(srs_wkt)
         is_geo = bool(sr.IsGeographic())
         if not is_geo:
-            if not _HAS_PYPROJ:
-                raise RuntimeError("pyproj needed to project sample points into the raster CRS.")
-            tr = Transformer.from_crs("EPSG:4326", srs_wkt, always_xy=True)
-            xs, ys = tr.transform(lons, lats)
+            xs, ys = _reproject_xy(4326, srs_wkt, lons, lats)   # lon/lat -> raster CRS (osr, pyproj fallback)
             xs = np.asarray(xs, np.float64); ys = np.asarray(ys, np.float64)
     else:
         raise ValueError(f"The raster has no CRS: {raster_path}")

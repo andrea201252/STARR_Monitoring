@@ -25,7 +25,11 @@ downstream number is produced by the unchanged Step 05 code.
 ## Requirements
 
 - ArcGIS Pro 3.x, using its bundled Python `arcgispro-py3`. Needs only packages
-  that are **always present**: numpy, pandas, scipy, matplotlib, GDAL/osgeo, pyproj.
+  that are **always present**: numpy, pandas, scipy, matplotlib, GDAL/osgeo.
+- **pyproj is NOT required.** Coordinate reprojection uses GDAL/osr (always
+  present with GDAL); pyproj is only a fallback if it happens to be importable.
+  If a covariate raster has no embedded CRS, the tool falls back to the **FNF
+  shapefile's CRS**.
 - **scikit-learn is NOT required.** Step 02 uses it if present; if it is missing
   (as on many ArcGIS installs) the toolbox automatically falls back to
   `steps/_sklearn_fallback.py` — numpy/scipy drop-ins for `StandardScaler`,
