@@ -93,6 +93,13 @@ Same layout and files as Colab, under `<output>/STARR_outputs/<run_id>/`:
 `05_baseline_CI_UNCBSL/` (with `baseline_CI90_UNCBSL_report.json` +
 `…_summary.csv`). See `STARR_Step05_output_variables.md` for every field.
 
+`04_reference_area/` also holds the geometry of the matched pixels (EPSG:4326,
+de-duplicated), for both the reference (donor/control) and the project (PA):
+`reference_points.shp` / `project_points.shp` (pixel centres) and
+`reference_grid.shp` / `project_grid.shp` (one square cell per pixel, ±½ pixel),
+plus `reference_points.csv` / `project_points.csv` as fallbacks. Shapefiles are
+written in a short temp folder and moved to the (possibly very long) output path.
+
 ## Two tools in this toolbox
 
 1. **STARR SEMDB Baseline (Steps 01-05)** — the full pipeline.

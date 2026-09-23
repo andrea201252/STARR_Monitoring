@@ -335,7 +335,7 @@ class STARRBaselineTool(object):
             manifest = _build_reference_manifest(twin_pixels, meta, project_name, run_id_full)
             with open(os.path.join(d04, "reference_area_FINAL_manifest.json"), "w") as fh:
                 json.dump(manifest, fh, indent=2)
-            _write_reference_points(arcpy, twin_pixels, d04)
+            _write_reference_outputs(arcpy, twin_pixels, d04, meta)
             arcpy.AddMessage(f"  Reference pixels (unique) : "
                              f"{manifest['reference_area_definition'].get('n_unique_pixels')}")
 
@@ -590,72 +590,143 @@ def _build_reference_manifest(twin_pixels, meta, project_name, run_id):
     }
 
 
-def _write_reference_points(arcpy, df, out_dir):
-    """Write the reference (control) points. Always a CSV (reliable, no path-length
-    or arcpy limits); the shapefile is best-effort (arcpy rejects extended-length
-    \\\\?\\ paths and shapefiles have a ~260-char path limit, so it may be skipped
-    on very deep output folders — the CSV is the fallback)."""
-    if not {"ref_lon", "ref_lat"}.issubset(df.columns):
-        return
-    # 1) CSV — always works (open() accepts \\?\ paths, no length limit)
-    keep = [c for c in ("ref_lon", "ref_lat", "proj_lon", "proj_lat",
-                        "ref_texture", "proj_texture", "match_distance")
-            if c in df.columns]
-    csv_path = os.path.join(out_dir, "reference_points.csv")
-    try:
-        df[keep].to_csv(csv_path, index=False)
-        arcpy.AddMessage(f"  reference_points.csv written ({len(df):,} rows)")
-    except Exception as e:
-        arcpy.AddWarning(f"Could not write reference_points.csv: {e}")
+def _uniq_xy(lon, lat, decimals=6):
+    """Unique finite (lon, lat) pairs (dedup reused donors / K:1 duplicates)."""
+    import numpy as _np
+    lon = _np.asarray(lon, float); lat = _np.asarray(lat, float)
+    m = _np.isfinite(lon) & _np.isfinite(lat)
+    lon, lat = lon[m], lat[m]
+    if lon.size == 0:
+        return lon, lat
+    key = _np.round(lon, decimals).astype("float64") + 1j * _np.round(lat, decimals).astype("float64")
+    _, idx = _np.unique(key, return_index=True)
+    idx.sort()
+    return lon[idx], lat[idx]
 
-    # 2) Shapefile — arcpy cannot use \\?\ paths and shapefiles have a ~260-char
-    #    limit, so write it in a SHORT temp folder, then move the sidecar files
-    #    (.shp/.shx/.dbf/.prj/.cpg) to the final (possibly very long) directory
-    #    with Python, whose open()/shutil DO handle \\?\ long paths.
-    import tempfile as _tf, shutil as _sh, glob as _glob
-    tmpd = None
+
+def _move_shp_from_temp(arcpy, tmpd, name, out_dir):
+    """Move a shapefile's real sidecars from a short temp dir to out_dir (which
+    may be a \\\\?\\ long path). Skips arcpy's transient .lock files. Returns the
+    number of files moved."""
+    import shutil as _sh, glob as _glob
+    moved = 0
+    for f in _glob.glob(os.path.join(tmpd, name + ".*")):
+        if ".lock" in os.path.basename(f).lower():
+            continue
+        dest = os.path.join(out_dir, os.path.basename(f))
+        try:
+            if os.path.exists(dest):
+                os.remove(dest)
+            _sh.move(f, dest)
+            moved += 1
+        except Exception as _me:
+            arcpy.AddWarning(f"    (skipped sidecar {os.path.basename(f)}: {_me})")
+    return moved
+
+
+def _write_point_shp(arcpy, lon, lat, out_dir, name):
+    """POINT shapefile in EPSG:4326 (short temp + move to out_dir)."""
+    import tempfile as _tf, shutil as _sh
+    tmpd = _tf.mkdtemp(prefix="starr_shp_")
     try:
         sr = arcpy.SpatialReference(4326)
-        tmpd = _tf.mkdtemp(prefix="starr_refpts_")            # short path, arcpy-safe
-        tmp_shp = os.path.join(tmpd, "reference_points.shp")
-        arcpy.management.CreateFeatureclass(tmpd, "reference_points.shp",
-                                            "POINT", spatial_reference=sr)
-        with arcpy.da.InsertCursor(tmp_shp, ["SHAPE@XY"]) as cur:
-            for lon, lat in df[["ref_lon", "ref_lat"]].dropna().itertuples(index=False):
-                cur.insertRow([(float(lon), float(lat))])
+        arcpy.management.CreateFeatureclass(tmpd, name + ".shp", "POINT", spatial_reference=sr)
+        with arcpy.da.InsertCursor(os.path.join(tmpd, name + ".shp"), ["SHAPE@XY"]) as cur:
+            for x, y in zip(lon, lat):
+                cur.insertRow([(float(x), float(y))])
         del cur
         try:
-            arcpy.management.ClearWorkspaceCache()   # release the schema lock
+            arcpy.management.ClearWorkspaceCache()
         except Exception:
             pass
-        # Move ONLY the real shapefile components — never arcpy's transient
-        # .lock / .sr.lock files (they are held open → Permission denied).
-        moved = 0
-        for f in _glob.glob(os.path.join(tmpd, "reference_points.*")):
-            base = os.path.basename(f).lower()
-            if ".lock" in base:
-                continue
-            dest = os.path.join(out_dir, os.path.basename(f))   # out_dir may be \\?\...
-            try:
-                if os.path.exists(dest):
-                    os.remove(dest)
-                _sh.move(f, dest)
-                moved += 1
-            except Exception as _me:
-                arcpy.AddWarning(f"    (skipped sidecar {os.path.basename(f)}: {_me})")
-        if moved:
-            arcpy.AddMessage(f"  reference_points.shp written ({moved} sidecar files)")
-        else:
-            arcpy.AddWarning("  reference_points.shp not written; use reference_points.csv.")
+        n = _move_shp_from_temp(arcpy, tmpd, name, out_dir)
+        arcpy.AddMessage(f"  {name}.shp written ({len(lon):,} points)" if n
+                         else f"  {name}.shp NOT written; use the CSV.")
     except Exception as e:
-        arcpy.AddWarning(f"reference_points.shp not written ({e}); "
-                         f"use reference_points.csv instead.")
+        arcpy.AddWarning(f"{name}.shp not written ({e}).")
     finally:
-        if tmpd:
-            try:
-                _sh.rmtree(tmpd, ignore_errors=True)
-            except Exception:
-                pass
+        _sh.rmtree(tmpd, ignore_errors=True)
+
+
+def _write_grid_shp(arcpy, lon, lat, hlon, hlat, out_dir, name):
+    """POLYGON grid (one square cell per pixel, ±half-pixel) in EPSG:4326."""
+    import tempfile as _tf, shutil as _sh
+    tmpd = _tf.mkdtemp(prefix="starr_shp_")
+    try:
+        sr = arcpy.SpatialReference(4326)
+        arcpy.management.CreateFeatureclass(tmpd, name + ".shp", "POLYGON", spatial_reference=sr)
+        with arcpy.da.InsertCursor(os.path.join(tmpd, name + ".shp"), ["SHAPE@"]) as cur:
+            for x, y in zip(lon, lat):
+                x = float(x); y = float(y)
+                arr = arcpy.Array([
+                    arcpy.Point(x - hlon, y - hlat), arcpy.Point(x + hlon, y - hlat),
+                    arcpy.Point(x + hlon, y + hlat), arcpy.Point(x - hlon, y + hlat),
+                    arcpy.Point(x - hlon, y - hlat)])
+                cur.insertRow([arcpy.Polygon(arr, sr)])
+        del cur
+        try:
+            arcpy.management.ClearWorkspaceCache()
+        except Exception:
+            pass
+        n = _move_shp_from_temp(arcpy, tmpd, name, out_dir)
+        arcpy.AddMessage(f"  {name}.shp written ({len(lon):,} cells)" if n
+                         else f"  {name}.shp NOT written.")
+    except Exception as e:
+        arcpy.AddWarning(f"{name}.shp not written ({e}).")
+    finally:
+        _sh.rmtree(tmpd, ignore_errors=True)
+
+
+def _half_pixel_deg(meta, ref_lat):
+    """Half a pixel expressed in degrees (lon, lat) from the raster pixel size."""
+    import numpy as _np
+    px = float(meta.get("pixel_size") or 0.0)
+    if px <= 0:
+        return 0.00013, 0.00013            # ~15 m fallback
+    if bool(meta.get("raster_is_geographic")):
+        return px / 2.0, px / 2.0          # already degrees
+    half_m = px / 2.0                       # projected (metres)
+    lat0 = float(ref_lat) if _np.isfinite(ref_lat) else 0.0
+    hlat = half_m / 111320.0
+    hlon = half_m / (111320.0 * max(0.1, _np.cos(_np.deg2rad(lat0))))
+    return hlon, hlat
+
+
+def _write_reference_outputs(arcpy, df, out_dir, meta):
+    """Write reference AND project (PA) outputs: points + pixel grids (as
+    EPSG:4326 shapefiles) plus CSV fallbacks. Pixels are de-duplicated (reused
+    donors / K:1 repeats collapse to unique cells)."""
+    import numpy as _np
+    # ---- CSVs (always reliable) ----
+    if {"ref_lon", "ref_lat"}.issubset(df.columns):
+        keep = [c for c in ("ref_lon", "ref_lat", "proj_lon", "proj_lat",
+                            "ref_texture", "proj_texture", "match_distance") if c in df.columns]
+        try:
+            df[keep].to_csv(os.path.join(out_dir, "reference_points.csv"), index=False)
+        except Exception as e:
+            arcpy.AddWarning(f"Could not write reference_points.csv: {e}")
+    if {"proj_lon", "proj_lat"}.issubset(df.columns):
+        try:
+            df[[c for c in ("proj_lon", "proj_lat", "proj_texture") if c in df.columns]].to_csv(
+                os.path.join(out_dir, "project_points.csv"), index=False)
+        except Exception as e:
+            arcpy.AddWarning(f"Could not write project_points.csv: {e}")
+
+    mean_lat = float(_np.nanmean(df["ref_lat"])) if "ref_lat" in df.columns else 0.0
+    hlon, hlat = _half_pixel_deg(meta, mean_lat)
+
+    # ---- Reference (donor/control) points + grid ----
+    if {"ref_lon", "ref_lat"}.issubset(df.columns):
+        rlon, rlat = _uniq_xy(df["ref_lon"], df["ref_lat"])
+        if rlon.size:
+            _write_point_shp(arcpy, rlon, rlat, out_dir, "reference_points")
+            _write_grid_shp(arcpy, rlon, rlat, hlon, hlat, out_dir, "reference_grid")
+    # ---- Project (PA) points + grid ----
+    if {"proj_lon", "proj_lat"}.issubset(df.columns):
+        plon, plat = _uniq_xy(df["proj_lon"], df["proj_lat"])
+        if plon.size:
+            _write_point_shp(arcpy, plon, plat, out_dir, "project_points")
+            _write_grid_shp(arcpy, plon, plat, hlon, hlat, out_dir, "project_grid")
 
 
 def _apply_donor_filters(arcpy, gio, donor_df, proj_df, fnf, eligible, extent_km, messages):
