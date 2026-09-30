@@ -1,33 +1,34 @@
 # -*- coding: utf-8 -*-
 """
 GS STARR Track 1 SEMDB — 00b_STARR_compare_extents.py
-Runner di confronto multi-extent.
+Multi-extent comparison runner.
 
-Esegue la pipeline Steps 01-04 per ogni extent in COMPARE_EXTENTS,
-aggrega le metriche dai JSON prodotti da ogni step e genera:
-  - comparison_summary.json   → tutte le metriche per extent
-  - comparison_plots.png      → 4 panel comparativi
-  - recommendation.txt        → extent minimo sufficiente
+Runs the Steps 01-04 pipeline for each extent in COMPARE_EXTENTS,
+aggregates the metrics from the JSON produced by each step and generates:
+  - comparison_summary.json   → all the metrics per extent
+  - comparison_plots.png      → 4 comparison panels
+  - recommendation.txt        → minimum sufficient extent
 
-Utilizzo
---------
+Usage
+-----
   python 00b_STARR_compare_extents.py
 
-Oppure da notebook:
+Or from a notebook:
   import importlib.util, pathlib
   m = importlib.util.spec_from_file_location(
         "s00b", pathlib.Path("00b_STARR_compare_extents.py"))
   s00b = importlib.util.module_from_spec(m); m.loader.exec_module(s00b)
   results = s00b.run_comparison()
 
-Criteri di sufficienza (tutti e 4 devono essere soddisfatti)
+Sufficiency criteria (all 4 must be satisfied)
 ─────────────────────────────────────────────────────────────
-  n_donor / n_project ≥ 3     (linea guida STARR)
+  n_donor / n_project ≥ 3     (STARR guideline)
   match_coverage_pct  ≥ 90%   (Step 02)
   twin_pass_pct       ≥ 30%   (Step 03)
   smd_max             ≤ 0.10  (Step 02)
 """
 
+import os
 import gc
 import json
 import importlib.util
@@ -48,18 +49,25 @@ HERE = Path(__file__).resolve().parent
 # CONFIG
 # ══════════════════════════════════════════════════════════════════════
 
-# Estensioni da confrontare — "full" + km numerici
-COMPARE_EXTENTS: list = ["full", 5, 10, 20, 30]
+# Extents to compare — "full" + numeric km
+COMPARE_EXTENTS: list = ["full", 5, 10, 20, 30, 40, 50, 60]
 
-# Directory base dove trovare i TIF e dove scrivere i risultati
+# Base directory where to find the TIFs and where to write the results
 BASE_DIR_CANDIDATES = []
 
 
-# Soglie di sufficienza
+# Sufficiency thresholds
 THRESH_RATIO_3X       = 3.0
 THRESH_MATCH_COV_PCT  = 90.0
 THRESH_TWIN_PASS_PCT  = 30.0
 THRESH_SMD_MAX        = 0.10
+
+# Output folder structure — CONFIGURABLE FROM THE NOTEBOOK.
+# Path: <base_dir> / OUTPUTS_DIRNAME / COMPARISON_DIRNAME
+# Recommended way: os.environ["STARR_OUTPUTS_DIRNAME"] = "..." at the top of the
+# notebook, BEFORE loading the modules (also applies to steps 01-05).
+OUTPUTS_DIRNAME    = os.environ.get("STARR_OUTPUTS_DIRNAME", "STARR_outputs")
+COMPARISON_DIRNAME = "comparison"
 
 # ══════════════════════════════════════════════════════════════════════
 
@@ -85,7 +93,7 @@ def load_module(filename: str, name: str):
     return mod
 
 
-# ── ESTRAZIONE METRICHE ───────────────────────────────────────────────
+# ── METRICS EXTRACTION ─────────────────────────────────────────────────
 
 def _load_json(path: Path) -> dict:
     if path.exists():
@@ -96,8 +104,8 @@ def _load_json(path: Path) -> dict:
 
 def extract_metrics(run_result: dict) -> dict:
     """
-    Estrae metriche aggregate leggendo i JSON di ogni step.
-    Usa i path in run_result["summary"] come punto di partenza.
+    Extracts aggregated metrics by reading the JSON of each step.
+    Uses the paths in run_result["summary"] as a starting point.
     """
     s = run_result.get("summary", {})
 
@@ -124,8 +132,8 @@ def extract_metrics(run_result: dict) -> dict:
     n_twin      = int(rep03.get("selected_pairs", s.get("twin_pass_n", 0)))
     smd_max     = float(rep02.get("SMD_max", s.get("smd_max") or 9.99))
 
-    # A2: usa il rapporto 3× basato sull'AREA (corretto) se disponibile,
-    # con fallback al proxy sui conteggi.
+    # A2: use the 3× ratio based on AREA (correct) if available,
+    # with fallback to the count-based proxy.
     ratio_area  = rep01.get("ratio_donor_project_area")
     ratio_count = n_donor / max(n_project, 1)
     ratio       = float(ratio_area) if ratio_area is not None else ratio_count
@@ -135,7 +143,7 @@ def extract_metrics(run_result: dict) -> dict:
     ref_ha      = float(rep04.get("reference_area_definition", {})
                         .get("total_ha", s.get("reference_area_ha", 0)))
 
-    # Criteri di sufficienza
+    # Sufficiency criteria
     ok_ratio  = (rep01.get("meets_3x_guideline_area")
                  if rep01.get("meets_3x_guideline_area") is not None
                  else ratio >= THRESH_RATIO_3X)
@@ -143,7 +151,7 @@ def extract_metrics(run_result: dict) -> dict:
     ok_match  = match_cov >= THRESH_MATCH_COV_PCT
     ok_twin   = twin_pct  >= THRESH_TWIN_PASS_PCT
     ok_smd    = smd_max   <= THRESH_SMD_MAX
-    # B4: il twin deve essere conforme, non solo "selezionato".
+    # B4: the twin must be compliant, not just "selected".
     twin_compliant = bool(rep03.get("twin_test_compliant",
                                     rep03.get("aggregate_twin_passed", False)))
     sufficient = ok_ratio and ok_match and ok_twin and ok_smd and twin_compliant
@@ -182,12 +190,12 @@ def extract_metrics(run_result: dict) -> dict:
     }
 
 
-# ── VERIFICA SUFFICIENZA ──────────────────────────────────────────────
+# ── SUFFICIENCY CHECK ─────────────────────────────────────────────────
 
 def find_minimum_sufficient_extent(metrics_list: list[dict]) -> dict | None:
     """
-    Restituisce il primo extent (in ordine crescente) che soddisfa
-    tutti e 4 i criteri. "full" viene trattato come +∞.
+    Returns the first extent (in ascending order) that satisfies
+    all 4 criteria. "full" is treated as +∞.
     """
     def sort_key(m):
         e = m["extent_km"]
@@ -200,7 +208,7 @@ def find_minimum_sufficient_extent(metrics_list: list[dict]) -> dict | None:
     return None
 
 
-# ── GRAFICI ───────────────────────────────────────────────────────────
+# ── PLOTS ─────────────────────────────────────────────────────────────
 
 def _extent_label(e) -> str:
     return "FULL" if e == "full" else f"{e}km"
@@ -213,12 +221,12 @@ def _criterion_color(ok: bool) -> str:
 def plot_comparison(metrics_list: list[dict],
                     out_path: Path | None = None) -> plt.Figure:
     """
-    4 panel comparativi:
-      A — n_donor + soglia ratio 3×
-      B — match_coverage_pct + soglia 90%
-      C — twin_pass_pct + soglia 30%
-      D — smd_max + soglia 0.10
-    Più una riga inferiore con la heatmap criteri per extent.
+    4 comparison panels:
+      A — n_donor + 3× ratio threshold
+      B — match_coverage_pct + 90% threshold
+      C — twin_pass_pct + 30% threshold
+      D — smd_max + 0.10 threshold
+    Plus a bottom row with the per-extent criteria heatmap.
     """
     labels   = [_extent_label(m["extent_km"]) for m in metrics_list]
     x        = np.arange(len(labels))
@@ -240,9 +248,9 @@ def plot_comparison(metrics_list: list[dict],
     ax.set_xticks(x); ax.set_xticklabels(labels, fontsize=8)
     ax.yaxis.set_major_formatter(
         plt.FuncFormatter(lambda v, _: f"{int(v):,}"))
-    ax.set_title("A — Dimensione pool donor\n(verde = soddisfa 3×)",
+    ax.set_title("A — Donor pool size\n(green = meets 3×)",
                  fontsize=9, fontweight="bold")
-    ax.set_ylabel("n pixel donor", fontsize=8)
+    ax.set_ylabel("n donor pixels", fontsize=8)
     ax.legend(fontsize=7); ax.grid(axis="y", alpha=0.35, zorder=0)
     for xi, v, r in zip(x, vals, [m["ratio_donor_project"] for m in metrics_list]):
         ax.text(xi, v, f"{r:.1f}×", ha="center", va="bottom",
@@ -255,12 +263,12 @@ def plot_comparison(metrics_list: list[dict],
               for m in metrics_list]
     ax.bar(x, vals, color=colors, alpha=0.78, **bar_kw)
     ax.axhline(THRESH_MATCH_COV_PCT, color="#f5a623", ls="--", lw=1.8,
-               label=f"Soglia {THRESH_MATCH_COV_PCT:.0f}%")
+               label=f"Threshold {THRESH_MATCH_COV_PCT:.0f}%")
     ax.set_xticks(x); ax.set_xticklabels(labels, fontsize=8)
     ax.set_ylim(0, 105)
-    ax.set_title("B — Copertura match %\n(verde = ≥90%)",
+    ax.set_title("B — Match coverage %\n(green = ≥90%)",
                  fontsize=9, fontweight="bold")
-    ax.set_ylabel("% px progetto matchati", fontsize=8)
+    ax.set_ylabel("% project px matched", fontsize=8)
     ax.legend(fontsize=7); ax.grid(axis="y", alpha=0.35, zorder=0)
     for xi, v in zip(x, vals):
         ax.text(xi, v + 1, f"{v:.1f}%", ha="center", va="bottom", fontsize=7)
@@ -272,12 +280,12 @@ def plot_comparison(metrics_list: list[dict],
               for m in metrics_list]
     ax.bar(x, vals, color=colors, alpha=0.78, **bar_kw)
     ax.axhline(THRESH_TWIN_PASS_PCT, color="#f5a623", ls="--", lw=1.8,
-               label=f"Soglia {THRESH_TWIN_PASS_PCT:.0f}%")
+               label=f"Threshold {THRESH_TWIN_PASS_PCT:.0f}%")
     ax.set_xticks(x); ax.set_xticklabels(labels, fontsize=8)
     ax.set_ylim(0, 105)
-    ax.set_title("C — Twin test superato %\n(verde = ≥30%)",
+    ax.set_title("C — Parallel test passed %\n(green = ≥30%)",
                  fontsize=9, fontweight="bold")
-    ax.set_ylabel("% coppie con trend parallelo", fontsize=8)
+    ax.set_ylabel("% pairs with parallel trend", fontsize=8)
     ax.legend(fontsize=7); ax.grid(axis="y", alpha=0.35, zorder=0)
     for xi, v in zip(x, vals):
         ax.text(xi, v + 1, f"{v:.1f}%", ha="center", va="bottom", fontsize=7)
@@ -289,22 +297,22 @@ def plot_comparison(metrics_list: list[dict],
               for m in metrics_list]
     ax.bar(x, vals, color=colors, alpha=0.78, **bar_kw)
     ax.axhline(THRESH_SMD_MAX, color="#f5a623", ls="--", lw=1.8,
-               label=f"Soglia {THRESH_SMD_MAX}")
+               label=f"Threshold {THRESH_SMD_MAX}")
     ax.set_xticks(x); ax.set_xticklabels(labels, fontsize=8)
-    ax.set_title("D — SMD max\n(verde = ≤0.10)",
+    ax.set_title("D — SMD max\n(green = ≤0.10)",
                  fontsize=9, fontweight="bold")
-    ax.set_ylabel("SMD massimo covariata", fontsize=8)
+    ax.set_ylabel("Max covariate SMD", fontsize=8)
     ax.legend(fontsize=7); ax.grid(axis="y", alpha=0.35, zorder=0)
     for xi, v in zip(x, vals):
         ax.text(xi, v, f"{v:.3f}", ha="center", va="bottom", fontsize=7)
 
-    # ── Riga inferiore: heatmap criteri ───────────────────────────────
+    # ── Bottom row: criteria heatmap ──────────────────────────────────
     ax2 = fig.add_subplot(gs[1, :])
     criteria_keys = ["ratio_3x", "match_cov_90pct",
                      "twin_pass_30pct", "twin_compliant", "smd_le_010", "ALL_SUFFICIENT"]
     criteria_labels = [
-        "Ratio ≥3×", "Match ≥90%", "Twin ≥30%",
-        "Twin conf.", "SMD ≤0.10", "TUTTO OK ✓"
+        "Ratio ≥3×", "Match ≥90%", "Parallel ≥30%",
+        "Parallel conf.", "SMD ≤0.10", "ALL OK ✓"
     ]
     n_ext  = len(metrics_list)
     n_crit = len(criteria_keys)
@@ -322,10 +330,10 @@ def plot_comparison(metrics_list: list[dict],
                      ha="center", va="center", fontsize=12,
                      color="white" if heat[i, j] == 0 else "black",
                      fontweight="bold")
-    ax2.set_title("Heatmap criteri di sufficienza per extent",
+    ax2.set_title("Sufficiency criteria heatmap by extent",
                   fontsize=9, fontweight="bold")
 
-    # Evidenzia extent minimo sufficiente
+    # Highlight the minimum sufficient extent
     min_suff = find_minimum_sufficient_extent(metrics_list)
     if min_suff:
         min_label = _extent_label(min_suff["extent_km"])
@@ -337,17 +345,17 @@ def plot_comparison(metrics_list: list[dict],
                                   fill=False, edgecolor="#0d47a1", lw=3))
 
     fig.suptitle(
-        f"GS STARR — Confronto Estensione Donor\n"
-        f"Progetto: {metrics_list[0]['n_project']:,} px | "
-        f"Soglie: ratio≥{THRESH_RATIO_3X}× | match≥{THRESH_MATCH_COV_PCT}% | "
-        f"twin≥{THRESH_TWIN_PASS_PCT}% | SMD≤{THRESH_SMD_MAX}",
+        f"GS STARR — Donor Extent Comparison\n"
+        f"Project: {metrics_list[0]['n_project']:,} px | "
+        f"Thresholds: ratio≥{THRESH_RATIO_3X}× | match≥{THRESH_MATCH_COV_PCT}% | "
+        f"parallel≥{THRESH_TWIN_PASS_PCT}% | SMD≤{THRESH_SMD_MAX}",
         fontsize=10, fontweight="bold")
 
     plt.tight_layout()
 
     if out_path:
         fig.savefig(out_path, dpi=150, bbox_inches="tight", facecolor="white")
-        print(f"  [00b] Plot salvato: {out_path}")
+        print(f"  [00b] Plot saved: {out_path}")
 
     return fig
 
@@ -360,33 +368,38 @@ def run_comparison(extents: list | None = None,
                    run_step_05: bool = False,
                    run_id_base: str | None = None,
                    fnf_shapefile: str | None = None,
-                   eligible_shapefile: str | None = None) -> dict:
+                   eligible_shapefile: str | None = None,
+                   use_eligibility: bool = True,
+                   outputs_dirname: str | None = None) -> dict:
     """
-    Esegue la pipeline Steps 01-04 per ogni extent e aggrega i risultati.
+    Runs the Steps 01-04 pipeline for each extent and aggregates the results.
 
-    Parametri
-    ---------
+    Parameters
+    ----------
     extents : list | None
-        Lista di estensioni. Default = COMPARE_EXTENTS.
+        List of extents. Default = COMPARE_EXTENTS.
     base_dirs : list | None
-        Directory base. Default = BASE_DIR_CANDIDATES.
+        Base directory. Default = BASE_DIR_CANDIDATES.
     output_dir : path | None
-        Dove salvare comparison_summary.json e comparison_plots.png.
+        Where to save comparison_summary.json and comparison_plots.png.
         Default: base_dir / STARR_outputs / comparison.
     run_step_05 : bool
-        Se True esegue anche Step 05 (richiede dati carbon-stock).
+        If True also runs Step 05 (requires carbon-stock data).
     run_id_base : str | None
-        Prefisso dei TIF GEE (es. "Idiofa_Lobi_2018_buf50km_...").
-        None / "" = wildcard (trova tutti i TIF nella cartella).
+        Prefix of the GEE TIFs (e.g. "Idiofa_Lobi_2018_buf50km_...").
+        None / "" = wildcard (finds all the TIFs in the folder).
     fnf_shapefile : str | None
-        Percorso shapefile FNF18. None = filtro disattivato.
+        Path of the FNF18 shapefile. None = filter disabled.
     eligible_shapefile : str | None
-        Percorso shapefile Eligible_FNF. None = filtro disattivato.
+        Path of the Eligible_FNF shapefile. None = filter disabled.
+    use_eligibility : bool
+        If True (default) applies the Eligible_FNF filter to the donor
+        (conservative). If False the donor uses the entire non-forest area.
 
-    Restituisce
-    -----------
+    Returns
+    -------
     dict {
-        "metrics": [dict per ogni extent],
+        "metrics": [dict per each extent],
         "minimum_sufficient": dict | None,
         "recommendation": str,
         "output_dir": str,
@@ -398,17 +411,17 @@ def run_comparison(extents: list | None = None,
 
     if not base_dirs:
         raise FileNotFoundError(
-            f"Nessuna directory trovata: {BASE_DIR_CANDIDATES}")
+            f"No directory found: {BASE_DIR_CANDIDATES}")
 
     out_dir = (Path(output_dir) if output_dir
-               else Path(base_dirs[0]) / "STARR_outputs" / "comparison")
+               else Path(base_dirs[0]) / (outputs_dirname or OUTPUTS_DIRNAME) / COMPARISON_DIRNAME)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     s00 = load_module("00_STARR_run_steps_01_to_05.py", "s00")
 
     print(f"\n{'═'*65}")
-    print(f"00b — Confronto Estensione Donor")
-    print(f"Estensioni da testare : {extents}")
+    print(f"00b — Donor Extent Comparison")
+    print(f"Extents to test       : {extents}")
     print(f"Output                : {out_dir}")
     print(f"{'═'*65}\n")
 
@@ -431,19 +444,21 @@ def run_comparison(extents: list | None = None,
                 base_dir           = str(base_dirs[0]),
                 fnf_shapefile      = fnf_shapefile,
                 eligible_shapefile = eligible_shapefile,
+                use_eligibility    = use_eligibility,
+                outputs_dirname    = outputs_dirname,
             )
             m = extract_metrics(result)
             all_results[lbl] = result
             metrics_list.append(m)
             ok = m["criteria"]["ALL_SUFFICIENT"]
-            print(f"  ✓ Completato in {time.time()-t0:.0f}s | "
-                  f"sufficient={'SI' if ok else 'NO'} | "
+            print(f"  ✓ Completed in {time.time()-t0:.0f}s | "
+                  f"sufficient={'YES' if ok else 'NO'} | "
                   f"ratio={m['ratio_donor_project']:.1f}× | "
                   f"match={m['match_coverage_pct']:.1f}% | "
-                  f"twin={m['twin_pass_pct']:.1f}% | "
+                  f"parallel={m['twin_pass_pct']:.1f}% | "
                   f"smd={m['smd_max']:.3f}")
         except Exception as exc:
-            print(f"  ✗ ERRORE extent={lbl}: {exc}")
+            print(f"  ✗ ERROR extent={lbl}: {exc}")
             metrics_list.append({
                 "extent_km": ext,
                 "error": str(exc),
@@ -454,14 +469,14 @@ def run_comparison(extents: list | None = None,
 
         gc.collect()
 
-    # ── Trovare extent minimo sufficiente ─────────────────────────────
+    # ── Find the minimum sufficient extent ────────────────────────────
     min_suff = find_minimum_sufficient_extent(metrics_list)
 
     if min_suff:
         rec = (
-            f"Extent minimo sufficiente: {_extent_label(min_suff['extent_km'])}\n"
+            f"Minimum sufficient extent: {_extent_label(min_suff['extent_km'])}\n"
             f"  n_donor        = {min_suff['n_donor']:,} "
-            f"({min_suff['ratio_donor_project']:.1f}× progetto)\n"
+            f"({min_suff['ratio_donor_project']:.1f}× project)\n"
             f"  match_coverage = {min_suff['match_coverage_pct']:.1f}%\n"
             f"  twin_pass      = {min_suff['twin_pass_pct']:.1f}%\n"
             f"  smd_max        = {min_suff['smd_max']:.3f}\n"
@@ -469,18 +484,18 @@ def run_comparison(extents: list | None = None,
         )
     else:
         rec = (
-            "NESSUN extent soddisfa tutti i criteri.\n"
-            "Azioni suggerite:\n"
-            "  1. Aumentare il buffer massimo (> 30 km)\n"
-            "  2. Verificare la qualità dei shapefile Eligible_FNF e FNF18\n"
-            "  3. Rilassare PAIR_SLOPE_DIFF_MAX in Step 03 (0.005 → 0.01)\n"
-            "  4. Verificare la copertura NDVI nel TIF donor"
+            "NO extent satisfies all criteria.\n"
+            "Suggested actions:\n"
+            "  1. Increase the maximum buffer (> 60 km)\n"
+            "  2. Check the quality of the Eligible_FNF and FNF18 shapefiles\n"
+            "  3. Relax PAIR_SLOPE_DIFF_MAX in Step 03 (0.005 → 0.01)\n"
+            "  4. Check the NDVI coverage in the donor TIF"
         )
 
     print(f"\n{'═'*65}")
-    print("RACCOMANDAZIONE")
+    print("RECOMMENDATION")
     print(rec)
-    print(f"Tempo totale: {time.time()-t_total:.0f}s")
+    print(f"Total time: {time.time()-t_total:.0f}s")
     print(f"{'═'*65}")
 
     # ── Plot ─────────────────────────────────────────────────────────
@@ -490,7 +505,7 @@ def run_comparison(extents: list | None = None,
         fig = plot_comparison(
             valid_m, out_path=out_dir / "comparison_plots.png")
 
-    # ── Salvataggio ───────────────────────────────────────────────────
+    # ── Saving ────────────────────────────────────────────────────────
     summary_out = {
         "timestamp_utc":       datetime.now(timezone.utc).isoformat(),
         "extents_tested":      extents,
@@ -499,17 +514,17 @@ def run_comparison(extents: list | None = None,
         "recommendation":      rec,
         "thresholds": {
             "ratio_3x":           THRESH_RATIO_3X,
-            "ratio_3x_note":      "applicato su area donor eleggibile vs area PA piena (Step01 meets_3x_guideline_area)",
+            "ratio_3x_note":      "applied on eligible donor area vs full PA area (Step01 meets_3x_guideline_area)",
             "match_coverage_pct": THRESH_MATCH_COV_PCT,
             "twin_pass_pct":      THRESH_TWIN_PASS_PCT,
-            "twin_compliant":     "twin_test_compliant deve essere True (Step03)",
+            "twin_compliant":     "twin_test_compliant must be True (Step03)",
             "smd_max":            THRESH_SMD_MAX,
         },
         "output_dir": str(out_dir),
     }
     with open(out_dir / "comparison_summary.json", "w", encoding="utf-8") as f:
         json.dump(summary_out, f, indent=2)
-    print(f"  Riepilogo JSON: {out_dir / 'comparison_summary.json'}")
+    print(f"  JSON summary: {out_dir / 'comparison_summary.json'}")
 
     rec_path = out_dir / "recommendation.txt"
     rec_path.write_text(rec, encoding="utf-8")
